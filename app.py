@@ -1,21 +1,19 @@
-import re
-import json
-import sys
-import warnings
-from datetime import date
-
-import numpy as np
 import pandas as pd
+import numpy as np
 import yfinance as yf
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
+from datetime import date
+import json
+import warnings
+import sys
+import re
+
 import streamlit as st
+import streamlit.components.v1 as components
 
 warnings.simplefilter(action="ignore", category=FutureWarning)
 
-# =============================================================================
-# Page setup
-# =============================================================================
 st.set_page_config(
     page_title="ETF Strategy Dashboard",
     page_icon="📊",
@@ -23,7 +21,7 @@ st.set_page_config(
 )
 
 # =============================================================================
-# 1) CONFIGURATION (same logic as your notebook)
+# 1. CONFIGURATION (UNCHANGED)
 # =============================================================================
 MIN_MACD_GAP_THRESHOLD = 0.001     # 0.10% Gap
 MIN_MACD_DELTA_THRESHOLD = 0.001   # 0.10% Delta (Change)
@@ -34,12 +32,7 @@ BREAKOUT_WINDOW = 20
 NOTIF_LOOKBACK_DAYS = 5
 LOOKBACK_PERIOD = "2y"
 
-
-# =============================================================================
-# 2) UNIVERSE
-# =============================================================================
 universe_data = [
-    # ===================== Equity (Select Sector SPDR) =====================
     ("Equity", "Technology", "XLK", "State Street® Technology Select Sector SPDR® ETF"),
     ("Equity", "Communication Services", "XLC", "State Street® Communication Services Select Sector SPDR® ETF"),
     ("Equity", "Consumer Discretionary", "XLY", "State Street® Consumer Discretionary Select Sector SPDR® ETF"),
@@ -53,7 +46,6 @@ universe_data = [
     ("Equity", "Real Estate", "XLRE", "State Street® Real Estate Select Sector SPDR® ETF"),
     ("Equity", "Pharmaceutical", "PPH", "VanEck® Pharmaceutical ETF"),
 
-    # ===================== Theme =====================
     ("Theme", "Semiconductors", "SMH", "VanEck® Semiconductor ETF"),
     ("Theme", "Cybersecurity", "CIBR", "First Trust® Nasdaq Cybersecurity ETF"),
     ("Theme", "Clean Energy", "ICLN", "BlackRock iShares® Global Clean Energy ETF"),
@@ -61,14 +53,12 @@ universe_data = [
     ("Theme", "Defense", "ITA", "BlackRock iShares® U.S. Aerospace & Defense ETF"),
     ("Theme", "Tech-Software", "IGV", "BlackRock iShares® Expanded Tech-Software Sector ETF"),
 
-    # ===================== Commodity =====================
     ("Commodity", "Gold", "GLD", "State Street® SPDR® Gold Shares"),
     ("Commodity", "Silver", "SLV", "BlackRock iShares® Silver Trust"),
     ("Commodity", "Gold Miners", "GDX", "VanEck® Gold Miners ETF"),
     ("Commodity", "Broad Commodities", "PDBC", "Invesco® Optimum Yield Diversified Commodity Strategy No K-1 ETF"),
     ("Commodity", "Uranium-Nuclear", "NLR", "VanEck® Uranium and Nuclear ETF"),
 
-    # ===================== Region =====================
     ("Region", "Emerging Markets", "VWO", "Vanguard® FTSE Emerging Markets ETF"),
     ("Region", "Hong Kong", "3033.HK", "CSOP® Hang Seng TECH Index ETF"),
     ("Region", "China", "3188.HK", "ChinaAMC® CSI 300 Index ETF"),
@@ -78,7 +68,6 @@ universe_data = [
     ("Region", "South Korea", "EWY", "BlackRock iShares® MSCI South Korea ETF"),
     ("Region", "USA", "ITOT", "BlackRock iShares® Core S&P Total U.S. Stock Market ETF"),
 
-    # ===================== Rates =====================
     ("Rates", "Cash (T-Bills)", "USFR", "WisdomTree® Floating Rate Treasury Fund"),
     ("Rates", "Aggregate Bond", "AGG", "BlackRock iShares® Core U.S. Aggregate Bond ETF"),
     ("Rates", "Short Treasuries", "SHY", "BlackRock iShares® 1-3 Year Treasury Bond ETF"),
@@ -90,7 +79,6 @@ universe_data = [
     ("Rates", "High Yield Credit", "HYG", "BlackRock iShares® iBoxx $ High Yield Corporate Bond ETF"),
     ("Rates", "Short Investment Grade Credit", "VCSH", "Vanguard® Short-Term Corporate Bond ETF"),
 
-    # ===================== UOBKH All-ETF Portfolio =====================
     ("UOBKH All-ETF Portfolio", "S&P 500", "SPY", "State Street® SPDR® S&P 500® ETF Trust"),
     ("UOBKH All-ETF Portfolio", "Energy", "XLE", "State Street® Energy Select Sector SPDR® ETF"),
     ("UOBKH All-ETF Portfolio", "Health Care", "XLV", "State Street® Health Care Select Sector SPDR® ETF"),
@@ -107,41 +95,35 @@ universe = pd.DataFrame(universe_data, columns=["bucket", "sector", "ticker", "n
 TICKERS = sorted(universe["ticker"].unique().tolist())
 TICKER_TO_NAME = dict(zip(universe["ticker"], universe["name"]))
 
-
 # =============================================================================
-# 3) CALCULATION LOGIC
+# 2. CALCULATION LOGIC (UNCHANGED)
 # =============================================================================
-def calculate_technicals(p: pd.Series) -> dict | None:
+def calculate_technicals(p: pd.Series):
     if len(p) < 50:
         return None
 
     last_px = p.iloc[-1]
     res = {"last_px": float(last_px)}
 
-    # Momentum
     for lbl, d in MOMENTUM_WINDOWS.items():
         if len(p) > d:
             res[lbl] = (p.iloc[-1] / p.iloc[-d - 1]) - 1.0
         else:
             res[lbl] = np.nan
 
-    # EMAs
     ema10 = p.ewm(span=10, adjust=False).mean()
     ema20 = p.ewm(span=20, adjust=False).mean()
     ema50 = p.ewm(span=50, adjust=False).mean()
     ema200 = p.ewm(span=200, adjust=False).mean()
 
-    # Delta EMA (Distance)
     res["d_ema10"] = (last_px / ema10.iloc[-1]) - 1.0
     res["d_ema20"] = (last_px / ema20.iloc[-1]) - 1.0
     res["d_ema50"] = (last_px / ema50.iloc[-1]) - 1.0
     res["d_ema200"] = (last_px / ema200.iloc[-1]) - 1.0
 
-    # Breakout
     prior_high = p.shift(1).rolling(BREAKOUT_WINDOW).max().iloc[-1]
     res["breakout"] = "↑" if last_px > prior_high else "-"
 
-    # MACD signal
     ema12 = p.ewm(span=12, adjust=False).mean()
     ema26 = p.ewm(span=26, adjust=False).mean()
     macd = ema12 - ema26
@@ -173,7 +155,7 @@ def calculate_technicals(p: pd.Series) -> dict | None:
     return res
 
 
-def run_event_engine(p: pd.Series, ticker: str) -> list[dict]:
+def run_event_engine(p: pd.Series, ticker: str):
     if len(p) < NOTIF_LOOKBACK_DAYS + 30:
         return []
 
@@ -232,455 +214,658 @@ def run_event_engine(p: pd.Series, ticker: str) -> list[dict]:
     elif h_now < 0 and delta_5d > 0:
         direction = "Less Bearish"
 
-    if direction and pd.notna(gap_now) and pd.notna(delta_5d):
-        if (abs(gap_now) >= MIN_MACD_GAP_THRESHOLD) and (abs(delta_5d) >= MIN_MACD_DELTA_THRESHOLD):
-            events.append({
-                "ticker": ticker,
-                "type": "Momentum",
-                "dir": direction,
-                "date": p.index[-1],
-                "gap": float(gap_now),
-                "delta": float(delta_5d),
-            })
+    if direction:
+        if pd.notna(gap_now) and pd.notna(delta_5d):
+            if (abs(gap_now) >= MIN_MACD_GAP_THRESHOLD) and (abs(delta_5d) >= MIN_MACD_DELTA_THRESHOLD):
+                events.append({
+                    "ticker": ticker,
+                    "type": "Momentum",
+                    "dir": direction,
+                    "date": p.index[-1],
+                    "gap": float(gap_now),
+                    "delta": float(delta_5d),
+                })
 
     return events
 
 
+# =============================================================================
+# 3. HOLDINGS HELPERS (UNCHANGED)
+# =============================================================================
 def normalize_holding_symbol(sym: str, parent_etf: str) -> str:
     if not sym:
         return sym
-    s = str(sym).strip()
+    s = sym.strip()
     if parent_etf.endswith(".HK"):
         if re.fullmatch(r"\d{3,5}", s):
             return f"{s}.HK"
     return s
 
 
-# =============================================================================
-# 4) DATA ACQUISITION (cached)
-# =============================================================================
-@st.cache_data(ttl=60 * 30, show_spinner=False)  # 30 min cache
-def fetch_price_history(tickers: list[str], period: str) -> pd.DataFrame:
-    raw = yf.download(
-        tickers,
-        period=period,
-        interval="1d",
-        group_by="ticker",
-        auto_adjust=True,
-        progress=False,
-        threads=True,
-    )
-    return raw
-
-
-def extract_close_series(raw: pd.DataFrame, ticker: str) -> pd.Series | None:
-    if raw is None or raw.empty:
-        return None
-
+def extract_series(raw, ticker):
     if isinstance(raw.columns, pd.MultiIndex):
         if ticker in raw.columns.levels[0]:
             d = raw[ticker].copy()
             if "Close" in d.columns:
-                s = d["Close"].dropna()
-                return s if not s.empty else None
-        return None
-
-    # Single ticker case
-    if "Close" in raw.columns:
-        s = raw["Close"].dropna()
-        return s if not s.empty else None
+                return d["Close"].dropna()
+    else:
+        # single-ticker download case
+        if "Close" in raw.columns:
+            return raw["Close"].dropna()
     return None
 
 
-@st.cache_data(ttl=60 * 60 * 6, show_spinner=False)  # 6h cache
-def fetch_holdings_top10(etf_ticker: str) -> list[dict]:
-    try:
-        tk = yf.Ticker(etf_ticker)
-        if hasattr(tk, "funds_data") and tk.funds_data:
-            h = tk.funds_data.top_holdings
-            if h is not None and not h.empty:
-                h = h.reset_index()
-                out = []
-                for _, r in h.head(10).iterrows():
-                    out.append({
-                        "symbol": str(r.get("Symbol", "")).strip(),
-                        "name": str(r.get("Name", "")).strip(),
-                        "weight": float(r.get("Holding Percent", np.nan)) if pd.notna(r.get("Holding Percent", np.nan)) else np.nan,
-                    })
-                return out
-    except Exception:
-        pass
-    return []
+# =============================================================================
+# 4. HTML HELPERS (UNCHANGED)
+# =============================================================================
+COLORS = {"green": "#047857", "red": "#b91c1c", "gray": "#6b7280", "blue": "#1d4ed8"}
+
+def style_val(val, type="pct", colored=True):
+    if pd.isna(val):
+        return "-"
+    txt = f"{val:.1%}" if type == "pct" else f"{val:.2f}"
+    if not colored:
+        return txt
+    c = COLORS["gray"]
+    if val > 0:
+        c = COLORS["green"]
+    elif val < 0:
+        c = COLORS["red"]
+    return f'<span style="color:{c}">{txt}</span>'
 
 
-@st.cache_data(ttl=60 * 30, show_spinner=False)  # 30 min cache
-def fetch_holdings_price_and_metrics(holding_tickers: list[str], period: str) -> dict:
-    if not holding_tickers:
-        return {}
+def style_sig(val):
+    base_style = "display:inline-block; padding:2px 8px; border-radius:4px; font-weight:bold; font-size:11px;"
+    if val is None or (isinstance(val, float) and pd.isna(val)):
+        return '<span style="color:#d1d5db">-</span>'
+    val = str(val)
+    if "Fresh" in val:
+        if "↑" in val:
+            return f'<span style="{base_style} background:#d1fae5; color:#065f46;">Fresh↑</span>'
+        if "↓" in val:
+            return f'<span style="{base_style} background:#fee2e2; color:#991b1b;">Fresh↓</span>'
+    if "↑" in val:
+        return f'<span style="{base_style} background:#dcfce7; color:#166534;">↑</span>'
+    if "↓" in val:
+        return f'<span style="{base_style} background:#fce7f3; color:#9d174d;">↓</span>'
+    return '<span style="color:#d1d5db">-</span>'
 
-    raw = yf.download(
-        holding_tickers,
-        period=period,
+
+def make_ticker_link(ticker):
+    return (
+        f"<a href=\"#\" onclick=\"goToChart('{ticker}'); return false;\" "
+        f"style=\"color:#1d4ed8; text-decoration:none; border-bottom:1px dotted #1d4ed8;\">{ticker}</a>"
+    )
+
+
+BUCKET_COLGROUP = """
+<colgroup>
+  <col style="width:72px;">   <col style="width:170px;">  <col style="width:70px;">   <col style="width:70px;">   <col style="width:70px;">   <col style="width:70px;">
+  <col style="width:80px;">   <col style="width:80px;">   <col style="width:80px;">   <col style="width:90px;">
+  <col style="width:70px;">   <col style="width:70px;">   <col style="width:70px;">   <col style="width:70px;">   <col style="width:60px;">
+</colgroup>
+"""
+
+BUCKET_FOOTNOTE = (
+    "* ∆EMA = (Price / EMA) − 1 | Fresh↑ / Fresh↓ = crossover within last 10 trading days | "
+    "50/200 = EMA50 vs EMA200 (Golden/Death Cross) | MACD = MACD(12,26,9) line vs signal | Breakout = close > prior 20D high."
+)
+
+UPDATES_FOOTNOTE = (
+    "*MACD Gap (%Px) = (MACD line − Signal line) ÷ Price | "
+    "∆MACD Gap (%Px) = How much MACD Gap widened/narrowed over the last 5 trading days | "
+    "Px = ETF Price"
+)
+
+# =============================================================================
+# 5. DATA + HTML GENERATION (cached)
+# =============================================================================
+@st.cache_data(ttl=60 * 30, show_spinner=False)
+def build_final_html():
+    raw_data = yf.download(
+        TICKERS,
+        period=LOOKBACK_PERIOD,
         interval="1d",
         group_by="ticker",
         auto_adjust=True,
         progress=False,
-        threads=True,
     )
 
-    metrics_map = {}
-    for ht in holding_tickers:
-        try:
-            s = extract_close_series(raw, ht)
-            if s is None or len(s) < 50:
-                continue
-            m = calculate_technicals(s)
-            if m:
-                metrics_map[ht] = m
-        except Exception:
-            continue
-    return metrics_map
-
-
-def build_tracker_and_updates(raw_prices: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame]:
     tracker_rows = []
     update_events = []
+    etf_history_db = {}
+    valid_tickers = []
+
     for t in TICKERS:
-        s = extract_close_series(raw_prices, t)
-        if s is None or len(s) < 50:
+        try:
+            df = pd.DataFrame()
+            if isinstance(raw_data.columns, pd.MultiIndex):
+                if t in raw_data.columns.levels[0]:
+                    df = raw_data[t].copy()
+            else:
+                if len(TICKERS) == 1 and t == TICKERS[0]:
+                    df = raw_data.copy()
+
+            if df.empty or "Close" not in df.columns:
+                continue
+
+            p = df["Close"].dropna()
+            if len(p) < 50:
+                continue
+
+            etf_history_db[t] = df
+            valid_tickers.append(t)
+
+            metrics = calculate_technicals(p)
+            if metrics:
+                metrics["ticker"] = t
+                tracker_rows.append(metrics)
+
+            update_events.extend(run_event_engine(p, t))
+
+        except Exception:
             continue
 
-        m = calculate_technicals(s)
-        if m:
-            m["ticker"] = t
-            tracker_rows.append(m)
-
-        update_events.extend(run_event_engine(s, t))
-
     df_tracker = pd.DataFrame(tracker_rows).merge(universe, on="ticker", how="left")
+    df_updates = (
+        pd.DataFrame(update_events).merge(universe[["ticker", "bucket"]], on="ticker", how="left")
+        if update_events
+        else pd.DataFrame()
+    )
 
-    if update_events:
-        df_updates = pd.DataFrame(update_events).merge(universe[["ticker", "bucket"]], on="ticker", how="left")
+    # ------------------ Holdings extraction (same as your HTML) ------------------
+    etf_holdings_map = {}
+    for t in TICKERS:
+        try:
+            tk = yf.Ticker(t)
+            if hasattr(tk, "funds_data") and tk.funds_data:
+                h = tk.funds_data.top_holdings
+                if h is not None and not h.empty:
+                    h = h.reset_index()
+                    top_10 = []
+                    for _, r in h.head(10).iterrows():
+                        top_10.append(
+                            {
+                                "symbol": str(r.get("Symbol", "")).strip(),
+                                "name": str(r.get("Name", "")).strip(),
+                                "weight": float(r.get("Holding Percent", np.nan)),
+                            }
+                        )
+                    etf_holdings_map[t] = top_10
+        except Exception:
+            etf_holdings_map[t] = []
+
+    all_holdings = []
+    for etf_t, holdings in etf_holdings_map.items():
+        for h in holdings:
+            norm = normalize_holding_symbol(h.get("symbol", ""), etf_t)
+            if norm:
+                all_holdings.append(norm)
+
+    all_holdings = sorted(list(set(all_holdings)))
+    holding_metrics_map = {}
+
+    if all_holdings:
+        raw_hold = yf.download(
+            all_holdings,
+            period=LOOKBACK_PERIOD,
+            interval="1d",
+            group_by="ticker",
+            auto_adjust=True,
+            progress=False,
+        )
+
+        for ht in all_holdings:
+            try:
+                p = extract_series(raw_hold, ht)
+                if p is None or len(p) < 50:
+                    continue
+                m = calculate_technicals(p)
+                if m:
+                    holding_metrics_map[ht] = m
+            except Exception:
+                continue
+
+    # ------------------ Build tracker HTML (same as your HTML) ------------------
+    tracker_html = ""
+    buckets = ["Equity", "Theme", "Region", "Rates", "Commodity", "UOBKH All-ETF Portfolio"]
+
+    for bucket in buckets:
+        sub = df_tracker[df_tracker["bucket"] == bucket]
+        if sub.empty:
+            continue
+
+        tracker_html += f"<div class='bucket-title'>{bucket}</div>"
+        tracker_html += f"<table class='data-table bucket-table'>{BUCKET_COLGROUP}<thead><tr>"
+
+        tracker_html += "<th>Ticker</th><th>Sector</th>"
+        tracker_html += "<th class='vdiv'>1M</th><th>3M</th><th>6M</th><th>12M</th>"
+        tracker_html += "<th class='vdiv'>ΔEMA10</th><th>ΔEMA20</th><th>ΔEMA50</th><th>ΔEMA200</th>"
+        tracker_html += "<th class='vdiv'>10/20</th><th>20/50</th><th>50/200</th><th>MACD</th><th>BO</th>"
+        tracker_html += "</tr></thead><tbody>"
+
+        for _, r in sub.iterrows():
+            tracker_html += "<tr>"
+            tracker_html += f"<td><b>{make_ticker_link(r['ticker'])}</b></td>"
+            tracker_html += f"<td>{r['sector']}</td>"
+
+            tracker_html += f"<td class='vdiv'>{style_val(r.get('1M'), 'pct')}</td>"
+            tracker_html += f"<td>{style_val(r.get('3M'), 'pct')}</td>"
+            tracker_html += f"<td>{style_val(r.get('6M'), 'pct')}</td>"
+            tracker_html += f"<td>{style_val(r.get('12M'), 'pct')}</td>"
+
+            tracker_html += f"<td class='vdiv'>{style_val(r.get('d_ema10'), 'pct')}</td>"
+            tracker_html += f"<td>{style_val(r.get('d_ema20'), 'pct')}</td>"
+            tracker_html += f"<td>{style_val(r.get('d_ema50'), 'pct')}</td>"
+            tracker_html += f"<td>{style_val(r.get('d_ema200'), 'pct')}</td>"
+
+            tracker_html += f"<td class='vdiv' style='text-align:center'>{style_sig(r.get('sig_10_20','-'))}</td>"
+            tracker_html += f"<td style='text-align:center'>{style_sig(r.get('sig_20_50','-'))}</td>"
+            tracker_html += f"<td style='text-align:center'>{style_sig(r.get('sig_50_200','-'))}</td>"
+            tracker_html += f"<td style='text-align:center'>{style_sig(r.get('macd_sig','-'))}</td>"
+            tracker_html += f"<td style='text-align:center'>{style_sig(r.get('breakout','-'))}</td>"
+            tracker_html += "</tr>"
+
+        tracker_html += "</tbody></table>"
+        tracker_html += f"<div class='footnote'>{BUCKET_FOOTNOTE}</div>"
+
+    # ------------------ Updates HTML (same as your HTML) ------------------
+    updates_html = (
+        f"<h3 style='margin-top:0'>MACD Event Updates Over The Last 5 Trading Days "
+        f"(Gap &gt; {MIN_MACD_GAP_THRESHOLD:.1%} AND ΔGap &gt; {MIN_MACD_DELTA_THRESHOLD:.1%})</h3>"
+    )
+
+    if not df_updates.empty:
+        updates_html += """
+        <table class='update-table'>
+            <thead>
+                <tr>
+                    <th>Ticker</th>
+                    <th>Bucket</th>
+                    <th style='width:40%'>Update</th>
+                    <th style='text-align:right'>MACD Gap (%Px)</th>
+                    <th style='text-align:right'>ΔMACD Gap (%Px)</th>
+                </tr>
+            </thead>
+            <tbody>
+        """
+
         df_updates["abs_gap"] = df_updates["gap"].abs()
-        df_updates = df_updates.sort_values("abs_gap", ascending=False)
+
+        def format_desc(row):
+            c = "#047857" if "Bullish" in str(row["dir"]) else "#b91c1c"
+            d_str = pd.to_datetime(row["date"]).strftime("%Y-%m-%d")
+            if row["type"] == "Flip":
+                return f"MACD Flipped <b style='color:{c}'>{row['dir']}</b> on {d_str}"
+            else:
+                return f"Momentum <b style='color:{c}'>{row['dir']}</b> on {d_str}"
+
+        df_updates["desc_html"] = df_updates.apply(format_desc, axis=1)
+
+        df_grouped = df_updates.groupby("ticker", as_index=False).agg(
+            {
+                "bucket": "first",
+                "gap": "first",
+                "delta": "first",
+                "abs_gap": "first",
+                "desc_html": lambda x: "<br>".join(x),
+            }
+        )
+        df_grouped = df_grouped.sort_values("abs_gap", ascending=False)
+
+        for _, r in df_grouped.iterrows():
+            gap_val = float(r["gap"])
+            gap_color = "#047857" if gap_val > 0 else "#b91c1c"
+            delta_val = float(r["delta"])
+
+            updates_html += f"""
+            <tr>
+                <td><b>{make_ticker_link(r['ticker'])}</b></td>
+                <td>{r['bucket']}</td>
+                <td>{r['desc_html']}</td>
+                <td style='text-align:right; font-weight:bold; color:{gap_color}'>{gap_val:.2%}</td>
+                <td style='text-align:right'>{delta_val:.2%}</td>
+            </tr>
+            """
+
+        updates_html += "</tbody></table>"
     else:
-        df_updates = pd.DataFrame()
+        updates_html += "<p>No events found matching strict criteria.</p>"
 
-    return df_tracker, df_updates
+    updates_html += f"<div class='footnote'>{UPDATES_FOOTNOTE}</div><br>"
 
+    # ------------------ Holdings HTML (same as your HTML) ------------------
+    holdings_html_map = {}
 
-# =============================================================================
-# 5) UI helpers
-# =============================================================================
-def style_pct(v):
-    if pd.isna(v):
-        return ""
-    if v > 0:
-        return "color: #047857; font-weight: 600;"
-    if v < 0:
-        return "color: #b91c1c; font-weight: 600;"
-    return "color: #6b7280;"
+    def holding_row_html(ticker, name, weight, m):
+        w_disp = f"{weight*100:.2f}%" if pd.notna(weight) else "-"
+        if not m:
+            return f"""
+            <tr>
+                <td><b>{ticker}</b></td>
+                <td>{name}</td>
+                <td style="text-align:right">{w_disp}</td>
+                <td class="vdiv">-</td><td>-</td><td>-</td><td>-</td>
+                <td class="vdiv">-</td><td>-</td><td>-</td><td>-</td><td>-</td>
+            </tr>
+            """
 
+        return f"""
+        <tr>
+            <td><b>{ticker}</b></td>
+            <td>{name}</td>
+            <td style="text-align:right">{w_disp}</td>
 
-def style_sig_cell(v):
-    # return CSS for signal-like columns
-    if v is None or (isinstance(v, float) and pd.isna(v)):
-        return "color:#9ca3af;"
-    s = str(v)
-    if "Fresh↑" in s:
-        return "background-color:#d1fae5; color:#065f46; font-weight:700; text-align:center;"
-    if "Fresh↓" in s:
-        return "background-color:#fee2e2; color:#991b1b; font-weight:700; text-align:center;"
-    if "↑" == s:
-        return "background-color:#dcfce7; color:#166534; font-weight:700; text-align:center;"
-    if "↓" == s:
-        return "background-color:#fce7f3; color:#9d174d; font-weight:700; text-align:center;"
-    if "-" == s:
-        return "color:#9ca3af; text-align:center;"
-    return "text-align:center;"
+            <td class="vdiv">{style_val(m.get('1M'), 'pct')}</td>
+            <td>{style_val(m.get('3M'), 'pct')}</td>
+            <td>{style_val(m.get('6M'), 'pct')}</td>
+            <td>{style_val(m.get('12M'), 'pct')}</td>
 
+            <td class="vdiv" style="text-align:center">{style_sig(m.get('sig_10_20','-'))}</td>
+            <td style="text-align:center">{style_sig(m.get('sig_20_50','-'))}</td>
+            <td style="text-align:center">{style_sig(m.get('sig_50_200','-'))}</td>
+            <td style="text-align:center">{style_sig(m.get('macd_sig','-'))}</td>
+            <td style="text-align:center">{style_sig(m.get('breakout','-'))}</td>
+        </tr>
+        """
 
-def format_pct(x):
-    return "-" if pd.isna(x) else f"{x:.1%}"
+    COL_W_SYMBOL = "85px"
+    COL_W_NAME = "160px"
+    COL_W_WEIGHT = "65px"
+    COL_W_MOM = "50px"
+    COL_W_TECH = "60px"
+    COL_W_BO = "50px"
 
+    HOLDINGS_COLGROUP = f"""
+    <colgroup>
+        <col style="width:{COL_W_SYMBOL};">
+        <col style="width:{COL_W_NAME};">
+        <col style="width:{COL_W_WEIGHT};">
+        <col style="width:{COL_W_MOM};"><col style="width:{COL_W_MOM};"><col style="width:{COL_W_MOM};"><col style="width:{COL_W_MOM};">
+        <col style="width:{COL_W_TECH};"><col style="width:{COL_W_TECH};"><col style="width:{COL_W_TECH};"><col style="width:{COL_W_TECH};">
+        <col style="width:{COL_W_BO};">
+    </colgroup>
+    """
 
-def build_deeplink(ticker: str) -> str:
-    return f"?ticker={ticker}&tab=analyzer"
+    for etf_ticker in TICKERS:
+        holdings = etf_holdings_map.get(etf_ticker, [])
+        h_html = f"<div class='holdings-header'>Top 10 Holdings: <b>{etf_ticker}</b></div>"
 
+        if not holdings:
+            h_html += "<p style='color:gray; font-size:12px; padding:10px;'><i>Holdings data unavailable via API.</i></p>"
+        else:
+            h_html += f"""
+            <table class='data-table' style='font-size:12px; margin-top:5px; table-layout:fixed; width:100%;'>
+                {HOLDINGS_COLGROUP}
+                <thead>
+                    <tr>
+                        <th>Symbol</th>
+                        <th>Name</th>
+                        <th style="text-align:right;">Weight</th>
+                        <th class="vdiv">1M</th><th>3M</th><th>6M</th><th>12M</th>
+                        <th class="vdiv" style="text-align:center">10/20</th>
+                        <th style="text-align:center">20/50</th>
+                        <th style="text-align:center">50/200</th>
+                        <th style="text-align:center">MACD</th>
+                        <th style="text-align:center">BO</th>
+                    </tr>
+                </thead>
+                <tbody>
+            """
+            for item in holdings:
+                raw_sym = item.get("symbol", "")
+                sym = normalize_holding_symbol(raw_sym, etf_ticker)
+                nm = item.get("name", "")
+                wt = item.get("weight", np.nan)
+                m = holding_metrics_map.get(sym)
+                h_html += holding_row_html(sym, nm, wt, m)
 
-def make_price_chart(raw_prices: pd.DataFrame, ticker: str) -> go.Figure | None:
-    if isinstance(raw_prices.columns, pd.MultiIndex):
-        if ticker not in raw_prices.columns.levels[0]:
-            return None
-        df = raw_prices[ticker].copy()
-    else:
-        df = raw_prices.copy()
+            h_html += "</tbody></table>"
 
-    if df.empty or "Close" not in df.columns:
-        return None
+        holdings_html_map[etf_ticker] = h_html
 
-    df = df.dropna(subset=["Close"])
-    if df.empty:
-        return None
+    # ------------------ Chart generation (same as your HTML) ------------------
+    fig = make_subplots(rows=2, cols=1, shared_xaxes=True, row_heights=[0.7, 0.3], vertical_spacing=0.03)
+    TRACES_PER_ETF = 8
 
-    ema10 = df["Close"].ewm(span=10).mean()
-    ema20 = df["Close"].ewm(span=20).mean()
-    ema50 = df["Close"].ewm(span=50).mean()
-    ema200 = df["Close"].ewm(span=200).mean()
+    for i, t in enumerate(valid_tickers):
+        df = etf_history_db.get(t, pd.DataFrame())
+        if df.empty:
+            for _ in range(TRACES_PER_ETF):
+                fig.add_trace(go.Scatter(x=[], y=[]))
+            continue
 
-    ema12 = df["Close"].ewm(span=12).mean()
-    ema26 = df["Close"].ewm(span=26).mean()
-    macd = ema12 - ema26
-    sig = macd.ewm(span=9).mean()
-    hist = macd - sig
+        ema10 = df["Close"].ewm(span=10).mean()
+        ema20 = df["Close"].ewm(span=20).mean()
+        ema50 = df["Close"].ewm(span=50).mean()
+        ema200 = df["Close"].ewm(span=200).mean()
 
-    fig = make_subplots(
-        rows=2, cols=1, shared_xaxes=True,
-        row_heights=[0.7, 0.3], vertical_spacing=0.03
-    )
+        ema12 = df["Close"].ewm(span=12).mean()
+        ema26 = df["Close"].ewm(span=26).mean()
+        macd = ema12 - ema26
+        sig = macd.ewm(span=9).mean()
+        hist = macd - sig
 
-    fig.add_trace(
-        go.Candlestick(
-            x=df.index, open=df["Open"], high=df["High"], low=df["Low"], close=df["Close"],
-            name="Price", showlegend=True
-        ),
-        row=1, col=1
-    )
-    fig.add_trace(go.Scatter(x=df.index, y=ema10, name="EMA10", line=dict(width=1)), row=1, col=1)
-    fig.add_trace(go.Scatter(x=df.index, y=ema20, name="EMA20", line=dict(width=1)), row=1, col=1)
-    fig.add_trace(go.Scatter(x=df.index, y=ema50, name="EMA50", line=dict(width=1)), row=1, col=1)
-    fig.add_trace(go.Scatter(x=df.index, y=ema200, name="EMA200", line=dict(width=1)), row=1, col=1)
+        viz = (i == 0)
 
-    fig.add_trace(go.Bar(x=df.index, y=hist, name="Histogram", showlegend=True), row=2, col=1)
-    fig.add_trace(go.Scatter(x=df.index, y=macd, name="MACD", line=dict(width=1)), row=2, col=1)
-    fig.add_trace(go.Scatter(x=df.index, y=sig, name="Signal", line=dict(width=1)), row=2, col=1)
+        fig.add_trace(
+            go.Candlestick(
+                x=df.index,
+                open=df["Open"],
+                high=df["High"],
+                low=df["Low"],
+                close=df["Close"],
+                name="Price",
+                visible=viz,
+                showlegend=True,
+            ),
+            row=1,
+            col=1,
+        )
+
+        fig.add_trace(go.Scatter(x=df.index, y=ema10, line=dict(color="#3b82f6", width=1), name="EMA10", visible=viz, showlegend=True), row=1, col=1)
+        fig.add_trace(go.Scatter(x=df.index, y=ema20, line=dict(color="#8b5cf6", width=1), name="EMA20", visible=viz, showlegend=True), row=1, col=1)
+        fig.add_trace(go.Scatter(x=df.index, y=ema50, line=dict(color="#f59e0b", width=1), name="EMA50", visible=viz, showlegend=True), row=1, col=1)
+        fig.add_trace(go.Scatter(x=df.index, y=ema200, line=dict(color="#ef4444", width=1), name="EMA200", visible=viz, showlegend=True), row=1, col=1)
+
+        fig.add_trace(go.Bar(x=df.index, y=hist, marker_color=np.where(hist >= 0, "#22c55e", "#ef4444"), name="Histogram", visible=viz, showlegend=True), row=2, col=1)
+        fig.add_trace(go.Scatter(x=df.index, y=macd, line=dict(color="#3b82f6", width=1), name="MACD", visible=viz, showlegend=True), row=2, col=1)
+        fig.add_trace(go.Scatter(x=df.index, y=sig, line=dict(color="#f59e0b", width=1), name="Signal", visible=viz, showlegend=True), row=2, col=1)
 
     fig.update_layout(
         height=650,
-        margin=dict(l=20, r=20, t=10, b=10),
+        margin=dict(l=40, r=20, t=20, b=20),
         template="plotly_white",
+        showlegend=True,
         legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0),
-        xaxis_rangeslider_visible=False,
     )
     fig.update_xaxes(rangebreaks=[dict(bounds=["sat", "mon"])])
-    return fig
+    fig.update_layout(xaxis_rangeslider_visible=False)
 
+    chart_div = fig.to_html(full_html=False, include_plotlyjs="cdn", div_id="plotly_chart")
 
-# =============================================================================
-# Header + controls
-# =============================================================================
-st.markdown(
-    """
+    dropdown_options = "".join([f'<option value="{t}">{t}</option>' for t in valid_tickers])
+    holdings_json = json.dumps(holdings_html_map)
+    tickers_json = json.dumps(valid_tickers)
+    names_json = json.dumps(TICKER_TO_NAME)
+
+    final_html = f"""
+    <!DOCTYPE html>
+    <html>
+    <head>
+    <title>ETF Strategy Dashboard</title>
     <style>
-      .small-muted { color:#6b7280; font-size:12px; }
-      a.ticker-link { color:#1d4ed8; text-decoration:none; border-bottom:1px dotted #1d4ed8; }
-      a.ticker-link:hover { opacity:0.8; }
+        body {{ font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif; background-color: #f3f4f6; margin: 0; padding: 20px; color: #111827; }}
+        .container {{ max-width: 1200px; margin: 0 auto; background: white; padding: 25px; border-radius: 12px; box-shadow: 0 4px 6px rgba(0,0,0,0.05); }}
+
+        .tab-header {{ display: flex; border-bottom: 2px solid #e5e7eb; margin-bottom: 20px; }}
+        .tab-btn {{ background: none; border: none; padding: 12px 24px; font-size: 16px; font-weight: 600; color: #6b7280; cursor: pointer; transition: all 0.2s; }}
+        .tab-btn:hover {{ color: #111827; background: #f9fafb; }}
+        .tab-btn.active {{ color: #2563eb; border-bottom: 2px solid #2563eb; margin-bottom: -2px; }}
+        .tab-content {{ display: none; animation: fadeIn 0.4s; }}
+        .tab-content.active {{ display: block; }}
+
+        .bucket-title {{ background: #eef2ff; color: #111827; font-weight: bold; font-size: 14px; padding: 8px 12px; margin-top: 15px; border-left: 4px solid #c7d2fe; }}
+
+        .data-table {{
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 13px;
+            margin-bottom: 6px;
+            table-layout: fixed;
+        }}
+        .data-table th {{
+            background: #111827;
+            color: white;
+            padding: 8px;
+            text-align: left;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }}
+        .data-table td {{
+            border-bottom: 1px solid #e5e7eb;
+            padding: 6px 8px;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }}
+        .data-table tr:nth-child(even) {{ background: #f9fafb; }}
+
+        .vdiv {{ border-left: 2px solid #e5e7eb !important; }}
+        .data-table th.vdiv {{ border-left: 2px solid #334155 !important; }}
+
+        .update-table {{ width: 100%; border-collapse: collapse; font-size: 13px; font-family: 'Helvetica Neue', sans-serif; }}
+        .update-table th {{ background-color: #0f172a; color: white; padding: 10px; text-align: left; font-weight: 600; }}
+        .update-table td {{ padding: 10px; border-bottom: 1px solid #e2e8f0; vertical-align: middle; }}
+        .update-table tr:nth-child(even) {{ background-color: #f8fafc; }}
+        .update-table tr:hover {{ background-color: #f1f5f9; }}
+
+        .controls {{ margin-bottom: 10px; padding: 15px; background: #f8fafc; border-radius: 8px; border: 1px solid #e2e8f0; display: flex; align-items: center; justify-content: space-between; }}
+        select {{ padding: 8px; border-radius: 4px; border: 1px solid #d1d5db; font-size: 14px; width: 200px; }}
+
+        .holdings-header {{ margin-top: 10px; font-weight: 600; }}
+
+        .footnote {{
+            font-size: 11px;
+            color: #6b7280;
+            margin: 4px 2px 12px 2px;
+        }}
+
+        @keyframes fadeIn {{ from {{ opacity: 0; }} to {{ opacity: 1; }} }}
     </style>
-    """,
-    unsafe_allow_html=True,
-)
+    </head>
+    <body>
 
-col_a, col_b = st.columns([1, 1], vertical_alignment="center")
-with col_a:
-    st.title("📊 ETF Strategic Dashboard")
-with col_b:
-    st.markdown(f"<div style='text-align:right' class='small-muted'>Generated: {date.today()}</div>", unsafe_allow_html=True)
+    <div class="container">
+        <div style="display:flex; justify-content:space-between; align-items:center;">
+            <h2 style="margin:0">📊 ETF Strategic Dashboard</h2>
+            <span style="color:#6b7280; font-size:12px">Generated: {date.today()}</span>
+        </div>
+        <br>
 
+        <div class="tab-header">
+            <button id="btn-tracker" class="tab-btn active" onclick="openTab('tracker')">📋 ETF Tracker</button>
+            <button id="btn-analyzer" class="tab-btn" onclick="openTab('analyzer')">📈 Chart Analyser</button>
+        </div>
+
+        <div id="tracker" class="tab-content active">
+            {updates_html}
+            {tracker_html}
+        </div>
+
+        <div id="analyzer" class="tab-content">
+            <div class="controls">
+                <div class="select-wrapper">
+                    <label>Select ETF:</label>
+                    <select id="etfSelector" onchange="updateChart()">{dropdown_options}</select>
+                </div>
+                <div style="font-size:12px; color:gray;">Updates Chart & Holdings</div>
+            </div>
+            <h3 id="chartTitle" style="margin-left:40px; margin-bottom:0;">Technical Analysis</h3>
+            {chart_div}
+            <hr style="margin: 20px 0; border:0; border-top:1px solid #e5e7eb;">
+            <div id="holdingsContainer"></div>
+        </div>
+    </div>
+
+    <script>
+        var holdingsData = {holdings_json};
+        var tickers = {tickers_json};
+        var etfNames = {names_json};
+        var tracesPerItem = 8;
+
+        function openTab(tabName) {{
+            var i, x, tablinks;
+            x = document.getElementsByClassName("tab-content");
+            for (i = 0; i < x.length; i++) {{ x[i].className = x[i].className.replace(" active", ""); }}
+            tablinks = document.getElementsByClassName("tab-btn");
+            for (i = 0; i < tablinks.length; i++) {{ tablinks[i].className = tablinks[i].className.replace(" active", ""); }}
+
+            document.getElementById(tabName).className += " active";
+            document.getElementById("btn-tracker").className = (tabName === 'tracker') ? "tab-btn active" : "tab-btn";
+            document.getElementById("btn-analyzer").className = (tabName === 'analyzer') ? "tab-btn active" : "tab-btn";
+
+            window.dispatchEvent(new Event('resize'));
+        }}
+
+        function goToChart(ticker) {{
+            openTab('analyzer');
+            var selector = document.getElementById("etfSelector");
+            selector.value = ticker;
+            updateChart();
+            document.getElementById("analyzer").scrollIntoView({{behavior: 'smooth'}});
+        }}
+
+        function updateChart() {{
+            var selector = document.getElementById("etfSelector");
+            var selectedTicker = selector.value;
+            var selectedIndex = tickers.indexOf(selectedTicker);
+
+            var fullName = etfNames[selectedTicker] || selectedTicker;
+            document.getElementById("chartTitle").innerText = fullName + " Technical Analysis";
+
+            var container = document.getElementById("holdingsContainer");
+            container.innerHTML = holdingsData[selectedTicker] || "<p>No holdings data.</p>";
+
+            var totalTraces = tickers.length * tracesPerItem;
+            var visibilityArray = new Array(totalTraces).fill(false);
+
+            var startIdx = selectedIndex * tracesPerItem;
+            for (var i = 0; i < tracesPerItem; i++) {{
+                visibilityArray[startIdx + i] = true;
+            }}
+
+            var plotDiv = document.getElementById('plotly_chart');
+            Plotly.restyle(plotDiv, {{'visible': visibilityArray}});
+        }}
+
+        window.onload = function() {{
+            var first = tickers[0];
+            if(first) {{
+                document.getElementById("etfSelector").value = first;
+                updateChart();
+            }}
+        }};
+    </script>
+    </body>
+    </html>
+    """
+
+    return final_html
+
+
+# =============================================================================
+# Streamlit wrapper (UI kept minimal; HTML inside is identical)
+# =============================================================================
 with st.sidebar:
-    st.header("Settings")
-    ttl_min = st.slider("Cache TTL (minutes)", min_value=5, max_value=180, value=30, step=5)
-    st.caption("This controls refresh frequency on Streamlit Cloud.")
-    st.divider()
-    bucket_filter = st.multiselect("Buckets", options=sorted(universe["bucket"].unique().tolist()),
-                                   default=sorted(universe["bucket"].unique().tolist()))
-    show_holdings = st.checkbox("Show holdings (selected ETF only)", value=True)
-    st.divider()
-    refresh_now = st.button("🔄 Refresh data now (clear cache)", use_container_width=True)
+    st.markdown("### Controls")
+    if st.button("🔄 Refresh now (clear cache)", use_container_width=True):
+        st.cache_data.clear()
+        st.rerun()
+    st.caption("Dashboard HTML is generated server-side and rendered below (same look as your original).")
 
-if refresh_now:
-    st.cache_data.clear()
-    st.rerun()
+html = build_final_html()
 
-# apply TTL slider (simple trick: store it & use in fetch wrappers)
-# (We keep fetch functions cached; slider is mainly UX. If you want TTL truly dynamic,
-# use different cache keys; keeping it simple here.)
-
-# =============================================================================
-# Load data
-# =============================================================================
-with st.spinner(f"Downloading prices for {len(TICKERS)} ETFs..."):
-    raw_prices = fetch_price_history(TICKERS, LOOKBACK_PERIOD)
-
-df_tracker, df_updates = build_tracker_and_updates(raw_prices)
-
-# Apply bucket filter
-if bucket_filter:
-    df_tracker = df_tracker[df_tracker["bucket"].isin(bucket_filter)].copy()
-    if not df_updates.empty:
-        df_updates = df_updates[df_updates["bucket"].isin(bucket_filter)].copy()
-
-# =============================================================================
-# Deep-link / query param handling
-# =============================================================================
-qp = st.query_params
-default_ticker = qp.get("ticker", [None])[0] if isinstance(qp.get("ticker"), list) else qp.get("ticker")
-default_tab = qp.get("tab", ["tracker"])[0] if isinstance(qp.get("tab"), list) else qp.get("tab")
-
-if default_ticker not in TICKERS:
-    default_ticker = TICKERS[0] if TICKERS else None
-if default_tab not in ["tracker", "analyzer"]:
-    default_tab = "tracker"
-
-tab_labels = ["📋 ETF Tracker", "📈 Chart Analyzer"]
-tab_tracker, tab_analyzer = st.tabs(tab_labels)
-
-# =============================================================================
-# TAB 1: Tracker
-# =============================================================================
-with tab_tracker:
-    st.subheader("MACD Event Updates (Last 5 trading days)")
-    st.caption(
-        f"Filter: MACD Gap > {MIN_MACD_GAP_THRESHOLD:.1%} AND ΔGap > {MIN_MACD_DELTA_THRESHOLD:.1%} "
-        f"(Gap = (MACD − Signal)/Price)"
-    )
-
-    if df_updates.empty:
-        st.info("No events found matching strict criteria.")
-    else:
-        show_updates = df_updates.copy()
-        show_updates["date"] = pd.to_datetime(show_updates["date"]).dt.strftime("%Y-%m-%d")
-        show_updates["gap"] = show_updates["gap"].map(lambda x: f"{x:.2%}")
-        show_updates["delta"] = show_updates["delta"].map(lambda x: f"{x:.2%}")
-        st.dataframe(
-            show_updates[["ticker", "bucket", "type", "dir", "date", "gap", "delta"]],
-            use_container_width=True,
-            hide_index=True,
-        )
-
-    st.divider()
-    st.subheader("ETF Tracker")
-
-    if df_tracker.empty:
-        st.warning("No tracker rows available (price history missing).")
-    else:
-        # Build a display table + deep links
-        disp = df_tracker.copy()
-        disp["Link"] = disp["ticker"].apply(lambda t: f"[{t}]({build_deeplink(t)})")
-        disp = disp[[
-            "Link", "bucket", "sector",
-            "1M", "3M", "6M", "12M",
-            "d_ema10", "d_ema20", "d_ema50", "d_ema200",
-            "sig_10_20", "sig_20_50", "sig_50_200", "macd_sig", "breakout"
-        ]].rename(columns={"Link": "Ticker"})
-
-        # Format
-        pct_cols = ["1M", "3M", "6M", "12M", "d_ema10", "d_ema20", "d_ema50", "d_ema200"]
-        sig_cols = ["sig_10_20", "sig_20_50", "sig_50_200", "macd_sig", "breakout"]
-
-        sty = disp.style
-        for c in pct_cols:
-            sty = sty.format({c: format_pct})
-            sty = sty.applymap(lambda v: style_pct(v) if pd.notna(v) else "", subset=[c])
-
-        for c in sig_cols:
-            sty = sty.applymap(style_sig_cell, subset=[c])
-
-        sty = sty.set_properties(subset=["Ticker"], **{"font-weight": "700"})
-        sty = sty.set_table_styles([
-            {"selector": "th", "props": [("background-color", "#111827"), ("color", "white"), ("font-weight", "700")]},
-            {"selector": "td", "props": [("border-bottom", "1px solid #e5e7eb")]},
-        ])
-
-        st.caption("Tip: click ticker to open Chart Analyzer (deep-link).")
-        st.dataframe(sty, use_container_width=True, hide_index=True)
-
-        st.markdown(
-            "<div class='small-muted'>"
-            "Notes: ∆EMA = (Price/EMA)-1 | Fresh↑/Fresh↓ = crossover within last 10 trading days | "
-            "50/200 = EMA50 vs EMA200 | MACD = MACD(12,26,9) line vs signal | BO = close > prior 20D high."
-            "</div>",
-            unsafe_allow_html=True,
-        )
-
-# =============================================================================
-# TAB 2: Analyzer
-# =============================================================================
-with tab_analyzer:
-    st.subheader("Chart Analyzer")
-
-    # ticker selector
-    col1, col2 = st.columns([1, 2], vertical_alignment="center")
-    with col1:
-        sel = st.selectbox(
-            "Select ETF",
-            options=TICKERS,
-            index=TICKERS.index(default_ticker) if default_ticker in TICKERS else 0,
-            key="ticker_select",
-        )
-    with col2:
-        st.markdown(f"<div class='small-muted'>Full name: <b>{TICKER_TO_NAME.get(sel, sel)}</b></div>", unsafe_allow_html=True)
-
-    # keep URL in sync
-    st.query_params["ticker"] = sel
-    st.query_params["tab"] = "analyzer"
-
-    fig = make_price_chart(raw_prices, sel)
-    if fig is None:
-        st.error("No chart data available for this ticker.")
-    else:
-        st.plotly_chart(fig, use_container_width=True)
-
-    # Holdings
-    if show_holdings:
-        st.divider()
-        st.subheader(f"Top 10 Holdings: {sel}")
-
-        with st.spinner("Fetching holdings..."):
-            holdings = fetch_holdings_top10(sel)
-
-        if not holdings:
-            st.info("Holdings data unavailable via yfinance funds API for this ticker.")
-        else:
-            # Normalize holding tickers
-            hdf = pd.DataFrame(holdings)
-            hdf["symbol"] = hdf["symbol"].apply(lambda x: normalize_holding_symbol(x, sel))
-            holding_tickers = [x for x in hdf["symbol"].dropna().astype(str).tolist() if x.strip()]
-
-            # Compute holding technicals (selected ETF only)
-            with st.spinner("Computing holdings technicals (selected ETF only)..."):
-                hold_metrics = fetch_holdings_price_and_metrics(sorted(list(set(holding_tickers))), LOOKBACK_PERIOD)
-
-            def get_m(t, key):
-                return hold_metrics.get(t, {}).get(key, np.nan)
-
-            out = hdf.copy()
-            out["weight"] = out["weight"].map(lambda x: "-" if pd.isna(x) else f"{x*100:.2f}%")
-
-            for k in ["1M", "3M", "6M", "12M"]:
-                out[k] = out["symbol"].map(lambda t: get_m(t, k))
-            for k in ["sig_10_20", "sig_20_50", "sig_50_200", "macd_sig", "breakout"]:
-                out[k] = out["symbol"].map(lambda t: hold_metrics.get(t, {}).get(k, "-") if t in hold_metrics else "-")
-
-            # style
-            pct_cols = ["1M", "3M", "6M", "12M"]
-            sig_cols = ["sig_10_20", "sig_20_50", "sig_50_200", "macd_sig", "breakout"]
-
-            sty = out.style
-            for c in pct_cols:
-                sty = sty.format({c: format_pct})
-                sty = sty.applymap(lambda v: style_pct(v) if pd.notna(v) else "", subset=[c])
-            for c in sig_cols:
-                sty = sty.applymap(style_sig_cell, subset=[c])
-
-            sty = sty.set_table_styles([
-                {"selector": "th", "props": [("background-color", "#111827"), ("color", "white"), ("font-weight", "700")]},
-                {"selector": "td", "props": [("border-bottom", "1px solid #e5e7eb")]},
-            ])
-
-            st.dataframe(
-                sty,
-                use_container_width=True,
-                hide_index=True,
-            )
-    else:
-        st.caption("Holdings display is disabled in the sidebar.")
+# Height: make it tall so it feels like a full page
+components.html(html, height=1600, scrolling=True)
