@@ -23,7 +23,7 @@ st.set_page_config(
 )
 
 # =============================================================================
-# 1. CONFIGURATION
+# 1. CONFIGURATION  (same logic as your notebook)
 # =============================================================================
 MIN_MACD_GAP_THRESHOLD = 0.001     # 0.10% Gap
 MIN_MACD_DELTA_THRESHOLD = 0.001   # 0.10% Delta (Change)
@@ -35,7 +35,6 @@ NOTIF_LOOKBACK_DAYS = 5
 LOOKBACK_PERIOD = "2y"
 
 universe_data = [
-    # ===================== Equity (Select Sector SPDR) =====================
     ("Equity", "Technology", "XLK", "State Street® Technology Select Sector SPDR® ETF"),
     ("Equity", "Communication Services", "XLC", "State Street® Communication Services Select Sector SPDR® ETF"),
     ("Equity", "Consumer Discretionary", "XLY", "State Street® Consumer Discretionary Select Sector SPDR® ETF"),
@@ -49,7 +48,6 @@ universe_data = [
     ("Equity", "Real Estate", "XLRE", "State Street® Real Estate Select Sector SPDR® ETF"),
     ("Equity", "Pharmaceutical", "PPH", "VanEck® Pharmaceutical ETF"),
 
-    # ===================== Theme =====================
     ("Theme", "Semiconductors", "SMH", "VanEck® Semiconductor ETF"),
     ("Theme", "Cybersecurity", "CIBR", "First Trust® Nasdaq Cybersecurity ETF"),
     ("Theme", "Clean Energy", "ICLN", "BlackRock iShares® Global Clean Energy ETF"),
@@ -57,14 +55,12 @@ universe_data = [
     ("Theme", "Defense", "ITA", "BlackRock iShares® U.S. Aerospace & Defense ETF"),
     ("Theme", "Tech-Software", "IGV", "BlackRock iShares® Expanded Tech-Software Sector ETF"),
 
-    # ===================== Commodity =====================
     ("Commodity", "Gold", "GLD", "State Street® SPDR® Gold Shares"),
     ("Commodity", "Silver", "SLV", "BlackRock iShares® Silver Trust"),
     ("Commodity", "Gold Miners", "GDX", "VanEck® Gold Miners ETF"),
     ("Commodity", "Broad Commodities", "PDBC", "Invesco® Optimum Yield Diversified Commodity Strategy No K-1 ETF"),
     ("Commodity", "Uranium-Nuclear", "NLR", "VanEck® Uranium and Nuclear ETF"),
 
-    # ===================== Region =====================
     ("Region", "Emerging Markets", "VWO", "Vanguard® FTSE Emerging Markets ETF"),
     ("Region", "Hong Kong", "3033.HK", "CSOP® Hang Seng TECH Index ETF"),
     ("Region", "China", "3188.HK", "ChinaAMC® CSI 300 Index ETF"),
@@ -74,7 +70,6 @@ universe_data = [
     ("Region", "South Korea", "EWY", "BlackRock iShares® MSCI South Korea ETF"),
     ("Region", "USA", "ITOT", "BlackRock iShares® Core S&P Total U.S. Stock Market ETF"),
 
-    # ===================== Rates =====================
     ("Rates", "Cash (T-Bills)", "USFR", "WisdomTree® Floating Rate Treasury Fund"),
     ("Rates", "Aggregate Bond", "AGG", "BlackRock iShares® Core U.S. Aggregate Bond ETF"),
     ("Rates", "Short Treasuries", "SHY", "BlackRock iShares® 1-3 Year Treasury Bond ETF"),
@@ -86,7 +81,6 @@ universe_data = [
     ("Rates", "High Yield Credit", "HYG", "BlackRock iShares® iBoxx $ High Yield Corporate Bond ETF"),
     ("Rates", "Short Investment Grade Credit", "VCSH", "Vanguard® Short-Term Corporate Bond ETF"),
 
-    # ===================== UOBKH All-ETF Portfolio =====================
     ("UOBKH All-ETF Portfolio", "S&P 500", "SPY", "State Street® SPDR® S&P 500® ETF Trust"),
     ("UOBKH All-ETF Portfolio", "Energy", "XLE", "State Street® Energy Select Sector SPDR® ETF"),
     ("UOBKH All-ETF Portfolio", "Health Care", "XLV", "State Street® Health Care Select Sector SPDR® ETF"),
@@ -102,18 +96,14 @@ universe_data = [
 universe = pd.DataFrame(universe_data, columns=["bucket", "sector", "ticker", "name"])
 TICKERS = sorted(universe["ticker"].unique().tolist())
 
-TICKER_TO_NAME = dict(
-    zip(
-        universe.drop_duplicates("ticker")["ticker"],
-        universe.drop_duplicates("ticker")["name"],
-    )
-)
+# full name mapping (chart title)
+TICKER_TO_NAME = dict(zip(universe.drop_duplicates("ticker")["ticker"], universe.drop_duplicates("ticker")["name"]))
 
-# FIX: 1-to-1 mapping for updates merge (prevents duplicated events for tickers appearing in multiple buckets)
+# FIX for duplicated update lines: force 1-to-1 ticker->bucket in updates table
 UNIVERSE_BUCKET_1TO1 = universe[["ticker", "bucket"]].drop_duplicates("ticker")
 
 # =============================================================================
-# 2. CALCULATION LOGIC
+# 2. CALCULATION LOGIC  (same logic as your notebook)
 # =============================================================================
 def calculate_technicals(p: pd.Series):
     if len(p) < 50:
@@ -122,30 +112,25 @@ def calculate_technicals(p: pd.Series):
     last_px = p.iloc[-1]
     res = {"last_px": float(last_px)}
 
-    # Momentum
     for lbl, d in MOMENTUM_WINDOWS.items():
         if len(p) > d:
             res[lbl] = (p.iloc[-1] / p.iloc[-d - 1]) - 1.0
         else:
             res[lbl] = np.nan
 
-    # EMAs
     ema10 = p.ewm(span=10, adjust=False).mean()
     ema20 = p.ewm(span=20, adjust=False).mean()
     ema50 = p.ewm(span=50, adjust=False).mean()
     ema200 = p.ewm(span=200, adjust=False).mean()
 
-    # Delta EMA (Distance)
     res["d_ema10"] = (last_px / ema10.iloc[-1]) - 1.0
     res["d_ema20"] = (last_px / ema20.iloc[-1]) - 1.0
     res["d_ema50"] = (last_px / ema50.iloc[-1]) - 1.0
     res["d_ema200"] = (last_px / ema200.iloc[-1]) - 1.0
 
-    # Breakout
     prior_high = p.shift(1).rolling(BREAKOUT_WINDOW).max().iloc[-1]
     res["breakout"] = "↑" if last_px > prior_high else "-"
 
-    # MACD signal
     ema12 = p.ewm(span=12, adjust=False).mean()
     ema26 = p.ewm(span=26, adjust=False).mean()
     macd = ema12 - ema26
@@ -206,7 +191,6 @@ def run_event_engine(p: pd.Series, ticker: str):
 
     events = []
 
-    # Flip
     if last_up or last_dn:
         if last_up and (not last_dn or last_up > last_dn):
             direction = "Bullish"
@@ -217,16 +201,9 @@ def run_event_engine(p: pd.Series, ticker: str):
 
         if pd.notna(gap_now) and pd.notna(delta_5d):
             if (abs(gap_now) >= MIN_MACD_GAP_THRESHOLD) and (abs(delta_5d) >= MIN_MACD_DELTA_THRESHOLD):
-                events.append({
-                    "ticker": ticker,
-                    "type": "Flip",
-                    "dir": direction,
-                    "date": evt_date,
-                    "gap": float(gap_now),
-                    "delta": float(delta_5d),
-                })
+                events.append({"ticker": ticker, "type": "Flip", "dir": direction, "date": evt_date,
+                               "gap": float(gap_now), "delta": float(delta_5d)})
 
-    # Momentum state today
     h_now = hist.iloc[-1]
     direction = None
     if h_now > 0 and delta_5d > 0:
@@ -240,29 +217,87 @@ def run_event_engine(p: pd.Series, ticker: str):
 
     if direction and pd.notna(gap_now) and pd.notna(delta_5d):
         if (abs(gap_now) >= MIN_MACD_GAP_THRESHOLD) and (abs(delta_5d) >= MIN_MACD_DELTA_THRESHOLD):
-            events.append({
-                "ticker": ticker,
-                "type": "Momentum",
-                "dir": direction,
-                "date": p.index[-1],
-                "gap": float(gap_now),
-                "delta": float(delta_5d),
-            })
+            events.append({"ticker": ticker, "type": "Momentum", "dir": direction, "date": p.index[-1],
+                           "gap": float(gap_now), "delta": float(delta_5d)})
 
     return events
 
 
 # =============================================================================
-# 3. HOLDINGS HELPERS
+# 3. HOLDINGS HELPERS (same approach as notebook, but more robust columns/fallback)
 # =============================================================================
 def normalize_holding_symbol(sym: str, parent_etf: str) -> str:
     if not sym:
         return sym
-    s = sym.strip()
+    s = str(sym).strip()
     if parent_etf.endswith(".HK"):
         if re.fullmatch(r"\d{3,5}", s):
             return f"{s}.HK"
     return s
+
+
+def fetch_top10_holdings_like_notebook(ticker: str):
+    """
+    Same logic style as your notebook:
+    - Prefer tk.funds_data.top_holdings
+    - But fix Streamlit-cloud differences: column names & fallback to equity_holdings
+    """
+    tk = yf.Ticker(ticker)
+    fd = getattr(tk, "funds_data", None)
+    if not fd:
+        return []
+
+    # --- 1) top_holdings (preferred)
+    try:
+        h = getattr(fd, "top_holdings", None)
+        if h is not None and hasattr(h, "empty") and not h.empty:
+            h = h.reset_index(drop=True)
+            out = []
+            for _, r in h.head(10).iterrows():
+                sym = str(r.get("Symbol", r.get("symbol", ""))).strip()
+                nm = str(r.get("Name", r.get("name", ""))).strip()
+
+                w = r.get("Holding Percent", r.get("holdingPercent", r.get("weight", np.nan)))
+                w = pd.to_numeric(w, errors="coerce")
+
+                if sym:
+                    out.append({"symbol": sym, "name": nm, "weight": float(w) if pd.notna(w) else np.nan})
+            if out:
+                return out
+    except:
+        pass
+
+    # --- 2) fallback: equity_holdings (some versions put holdings here)
+    try:
+        eh = getattr(fd, "equity_holdings", None)
+        if eh is not None and hasattr(eh, "empty") and not eh.empty:
+            eh = eh.copy().reset_index(drop=True)
+
+            sym_col = "Symbol" if "Symbol" in eh.columns else ("symbol" if "symbol" in eh.columns else None)
+            name_col = "Name" if "Name" in eh.columns else ("name" if "name" in eh.columns else None)
+
+            w_col = None
+            for c in ["Holding Percent", "holdingPercent", "weight", "Weight", "percent", "Percent"]:
+                if c in eh.columns:
+                    w_col = c
+                    break
+
+            if sym_col and w_col:
+                eh[w_col] = pd.to_numeric(eh[w_col], errors="coerce")
+                eh = eh.sort_values(w_col, ascending=False).head(10)
+
+                out = []
+                for _, r in eh.iterrows():
+                    sym = str(r.get(sym_col, "")).strip()
+                    nm = str(r.get(name_col, "")).strip() if name_col else ""
+                    w = r.get(w_col, np.nan)
+                    if sym:
+                        out.append({"symbol": sym, "name": nm, "weight": float(w) if pd.notna(w) else np.nan})
+                return out
+    except:
+        pass
+
+    return []
 
 
 def extract_series(raw, ticker):
@@ -278,7 +313,7 @@ def extract_series(raw, ticker):
 
 
 # =============================================================================
-# 4. HTML HELPERS (keep original look)
+# 4. HTML HELPERS (same look)
 # =============================================================================
 COLORS = {"green": "#047857", "red": "#b91c1c", "gray": "#6b7280", "blue": "#1d4ed8"}
 
@@ -294,7 +329,6 @@ def style_val(val, type="pct", colored=True):
     elif val < 0:
         c = COLORS["red"]
     return f'<span style="color:{c}">{txt}</span>'
-
 
 def style_sig(val):
     base_style = "display:inline-block; padding:2px 8px; border-radius:4px; font-weight:bold; font-size:11px;"
@@ -312,31 +346,21 @@ def style_sig(val):
         return f'<span style="{base_style} background:#fce7f3; color:#9d174d;">↓</span>'
     return '<span style="color:#d1d5db">-</span>'
 
-
 def style_trend_from_macd(macd_sig: str):
-    # Bullish/Bearish pill derived from MACD direction (keeps it simple and stable)
     base = "display:inline-block; padding:2px 8px; border-radius:999px; font-weight:700; font-size:11px;"
     s = "" if macd_sig is None else str(macd_sig)
-
     if "↑" in s:
         return f'<span style="{base} background:#d1fae5; color:#065f46;">Bullish</span>'
     if "↓" in s:
         return f'<span style="{base} background:#fee2e2; color:#991b1b;">Bearish</span>'
     return f'<span style="{base} background:#f3f4f6; color:#6b7280;">-</span>'
 
-
 def make_ticker_link(ticker):
-    return (
-        f"<a href=\"#\" onclick=\"goToChart('{ticker}'); return false;\" "
-        f"style=\"color:#1d4ed8; text-decoration:none; border-bottom:1px dotted #1d4ed8;\">{ticker}</a>"
-    )
-
+    return f'<a href="#" onclick="goToChart(\'{ticker}\'); return false;" style="color:#1d4ed8; text-decoration:none; border-bottom:1px dotted #1d4ed8;">{ticker}</a>'
 
 BUCKET_COLGROUP = """
 <colgroup>
-  <col style="width:92px;">   <!-- Trend -->
-  <col style="width:72px;">   <!-- Ticker -->
-  <col style="width:170px;">  <!-- Sector -->
+  <col style="width:92px;">   <col style="width:72px;">   <col style="width:170px;">
   <col style="width:70px;">   <col style="width:70px;">   <col style="width:70px;">   <col style="width:70px;">
   <col style="width:80px;">   <col style="width:80px;">   <col style="width:80px;">   <col style="width:90px;">
   <col style="width:70px;">   <col style="width:70px;">   <col style="width:70px;">   <col style="width:70px;">   <col style="width:60px;">
@@ -360,7 +384,9 @@ UPDATES_FOOTNOTE = (
 # =============================================================================
 @st.cache_data(ttl=60 * 60 * 4, show_spinner=False)  # 4 hours
 def build_final_html():
-    # --- Prices
+    # =============================================================================
+    # 3. DATA ACQUISITION (ETFs)  (same logic as your notebook)
+    # =============================================================================
     raw_data = yf.download(
         TICKERS, period=LOOKBACK_PERIOD, interval="1d",
         group_by="ticker", auto_adjust=True, progress=False
@@ -397,101 +423,46 @@ def build_final_html():
                 tracker_rows.append(metrics)
 
             update_events.extend(run_event_engine(p, t))
-        except Exception:
+        except:
             continue
 
     df_tracker = pd.DataFrame(tracker_rows).merge(universe, on="ticker", how="left")
 
-    # FIX: 1-to-1 mapping merge to avoid duplicated update lines for multi-bucket tickers
+    # FIX: avoid duplicate lines for tickers that appear in multiple buckets (e.g. 3033.HK)
     df_updates = (
         pd.DataFrame(update_events).merge(UNIVERSE_BUCKET_1TO1, on="ticker", how="left")
         if update_events else pd.DataFrame()
     )
 
-    # --- Holdings (top 10)
-    def fetch_top10_holdings_yf(ticker: str):
-        tk = yf.Ticker(ticker)
-        fd = getattr(tk, "funds_data", None)
-        if not fd:
-            return []
-    
-        # 1) Try top_holdings
-        try:
-            h = getattr(fd, "top_holdings", None)
-            if h is not None and hasattr(h, "empty") and not h.empty:
-                h = h.reset_index(drop=True)
-    
-                out = []
-                for _, r in h.head(10).iterrows():
-                    sym = str(r.get("Symbol", r.get("symbol", ""))).strip()
-                    nm  = str(r.get("Name", r.get("name", ""))).strip()
-    
-                    w = r.get("Holding Percent", r.get("holdingPercent", r.get("weight", np.nan)))
-                    w = pd.to_numeric(w, errors="coerce")
-    
-                    if sym:
-                        out.append({"symbol": sym, "name": nm, "weight": float(w) if pd.notna(w) else np.nan})
-                if out:
-                    return out
-        except:
-            pass
-    
-        # 2) Fallback: equity_holdings (some versions return holdings here)
-        try:
-            eh = getattr(fd, "equity_holdings", None)
-            if eh is not None and hasattr(eh, "empty") and not eh.empty:
-                eh = eh.copy().reset_index(drop=True)
-    
-                # column name guesses
-                sym_col = "symbol" if "symbol" in eh.columns else ("Symbol" if "Symbol" in eh.columns else None)
-                name_col = "name" if "name" in eh.columns else ("Name" if "Name" in eh.columns else None)
-    
-                w_col = None
-                for c in ["Holding Percent", "holdingPercent", "weight", "Weight", "percent", "Percent"]:
-                    if c in eh.columns:
-                        w_col = c
-                        break
-    
-                if sym_col and w_col:
-                    eh[w_col] = pd.to_numeric(eh[w_col], errors="coerce")
-                    eh = eh.sort_values(w_col, ascending=False).head(10)
-    
-                    out = []
-                    for _, r in eh.iterrows():
-                        sym = str(r.get(sym_col, "")).strip()
-                        nm  = str(r.get(name_col, "")).strip() if name_col else ""
-                        w   = r.get(w_col, np.nan)
-                        if sym:
-                            out.append({"symbol": sym, "name": nm, "weight": float(w) if pd.notna(w) else np.nan})
-                    return out
-        except:
-            pass
-    
-        return []
-    
-    
-    # --- Holdings (top 10) ---
+    # =============================================================================
+    # 4. HOLDINGS EXTRACTION  (same style as notebook, but fixed)
+    # =============================================================================
     etf_holdings_map = {}
     for t in TICKERS:
         try:
-            etf_holdings_map[t] = fetch_top10_holdings_yf(t)
+            etf_holdings_map[t] = fetch_top10_holdings_like_notebook(t)
         except:
             etf_holdings_map[t] = []
-    # --- Holdings technicals
+
+    # =============================================================================
+    # 4B. HOLDINGS TECHNICALS  (same logic as notebook)
+    # =============================================================================
     all_holdings = []
     for etf_t, holdings in etf_holdings_map.items():
         for h in holdings:
             norm = normalize_holding_symbol(h.get("symbol", ""), etf_t)
             if norm:
                 all_holdings.append(norm)
-    all_holdings = sorted(list(set(all_holdings)))
 
+    all_holdings = sorted(list(set(all_holdings)))
     holding_metrics_map = {}
+
     if all_holdings:
         raw_hold = yf.download(
             all_holdings, period=LOOKBACK_PERIOD, interval="1d",
             group_by="ticker", auto_adjust=True, progress=False
         )
+
         for ht in all_holdings:
             try:
                 p = extract_series(raw_hold, ht)
@@ -500,11 +471,11 @@ def build_final_html():
                 m = calculate_technicals(p)
                 if m:
                     holding_metrics_map[ht] = m
-            except Exception:
+            except:
                 continue
 
     # =============================================================================
-    # 6. HTML: TRACKER + UPDATES + HOLDINGS
+    # 6. HTML: TRACKER + UPDATES + HOLDINGS  (same design)
     # =============================================================================
     tracker_html = ""
     buckets = ["Equity", "Theme", "Region", "Rates", "Commodity", "UOBKH All-ETF Portfolio"]
@@ -525,7 +496,7 @@ def build_final_html():
 
         for _, r in sub.iterrows():
             tracker_html += "<tr>"
-            tracker_html += f"<td style='text-align:left'>{style_trend_from_macd(r.get('macd_sig'))}</td>"
+            tracker_html += f"<td>{style_trend_from_macd(r.get('macd_sig'))}</td>"
             tracker_html += f"<td class='vdiv'><b>{make_ticker_link(r['ticker'])}</b></td>"
             tracker_html += f"<td>{r['sector']}</td>"
 
@@ -611,7 +582,7 @@ def build_final_html():
 
     updates_html += f"<div class='footnote'>{UPDATES_FOOTNOTE}</div><br>"
 
-    # --- HOLDINGS TABLES ---
+    # --- HOLDINGS TABLE GENERATION (same style) ---
     holdings_html_map = {}
 
     def holding_row_html(ticker, name, weight, m):
@@ -702,7 +673,7 @@ def build_final_html():
         holdings_html_map[etf_ticker] = h_html
 
     # =============================================================================
-    # 7. CHART GENERATION (same as before)
+    # 7. CHART GENERATION (same logic)
     # =============================================================================
     fig = make_subplots(rows=2, cols=1, shared_xaxes=True, row_heights=[0.7, 0.3], vertical_spacing=0.03)
     TRACES_PER_ETF = 8
@@ -761,6 +732,7 @@ def build_final_html():
     chart_div = fig.to_html(full_html=False, include_plotlyjs="cdn", div_id="plotly_chart")
 
     dropdown_options = "".join([f'<option value="{t}">{t}</option>' for t in valid_tickers])
+
     holdings_json = json.dumps(holdings_html_map)
     tickers_json = json.dumps(valid_tickers)
     names_json = json.dumps(TICKER_TO_NAME)
@@ -832,7 +804,7 @@ def build_final_html():
 
     @keyframes fadeIn {{ from {{ opacity: 0; }} to {{ opacity: 1; }} }}
 
-    /* ---- Mobile-friendly (keep desktop look unchanged; enable smooth horizontal scroll) ---- */
+    /* Mobile-friendly: keep desktop design, enable horizontal scroll for tables */
     .table-wrap {{ overflow-x: auto; -webkit-overflow-scrolling: touch; }}
     .table-wrap table {{ min-width: 980px; }}
 
@@ -949,18 +921,17 @@ def build_final_html():
 
 
 # =============================================================================
-# Sidebar (clean, not confusing)
+# Sidebar (clean + precise)
 # =============================================================================
 with st.sidebar:
-    st.markdown("### Update")
+    st.markdown("### Data Refresh")
     if st.button("🔄 Refresh data now", use_container_width=True):
         st.cache_data.clear()
         st.rerun()
-    st.caption("Auto-updates every 4 hours.")
+    st.caption("Auto-refresh every 4 hours (to reduce Yahoo API pressure).")
 
 # =============================================================================
-# Render (bigger height for phone iframe usability)
+# Render
 # =============================================================================
 html = build_final_html()
 components.html(html, height=2200, scrolling=True)
-
