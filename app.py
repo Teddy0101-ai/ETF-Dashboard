@@ -6,7 +6,6 @@ from plotly.subplots import make_subplots
 from datetime import date
 import json
 import warnings
-import sys
 import re
 
 import streamlit as st
@@ -15,7 +14,7 @@ import streamlit.components.v1 as components
 warnings.simplefilter(action="ignore", category=FutureWarning)
 
 st.set_page_config(
-    page_title="ETF Strategy Dashboard",
+    page_title="Products Team Trend Spotter",
     page_icon="📊",
     layout="wide",
 )
@@ -101,7 +100,7 @@ universe = pd.DataFrame(universe_data, columns=["bucket", "sector", "ticker", "n
 TICKERS = sorted(universe["ticker"].unique().tolist())
 TICKER_TO_NAME = dict(zip(universe.drop_duplicates("ticker")["ticker"], universe.drop_duplicates("ticker")["name"]))
 
-# --- FIX: ensure 1-to-1 bucket mapping for updates merge (prevents duplicated 3033.HK lines) ---
+# Fix for duplicated update lines (e.g., 3033.HK / AGG / XLE duplicates in universe)
 UNIVERSE_BUCKET_1TO1 = universe[["ticker", "bucket"]].drop_duplicates("ticker")
 
 # =============================================================================
@@ -114,25 +113,30 @@ def calculate_technicals(p: pd.Series):
     last_px = p.iloc[-1]
     res = {"last_px": float(last_px)}
 
+    # Momentum
     for lbl, d in MOMENTUM_WINDOWS.items():
         if len(p) > d:
             res[lbl] = (p.iloc[-1] / p.iloc[-d - 1]) - 1.0
         else:
             res[lbl] = np.nan
 
+    # EMAs
     ema10 = p.ewm(span=10, adjust=False).mean()
     ema20 = p.ewm(span=20, adjust=False).mean()
     ema50 = p.ewm(span=50, adjust=False).mean()
     ema200 = p.ewm(span=200, adjust=False).mean()
 
+    # Delta EMA (Distance)
     res["d_ema10"] = (last_px / ema10.iloc[-1]) - 1.0
     res["d_ema20"] = (last_px / ema20.iloc[-1]) - 1.0
     res["d_ema50"] = (last_px / ema50.iloc[-1]) - 1.0
     res["d_ema200"] = (last_px / ema200.iloc[-1]) - 1.0
 
+    # Breakout
     prior_high = p.shift(1).rolling(BREAKOUT_WINDOW).max().iloc[-1]
     res["breakout"] = "↑" if last_px > prior_high else "-"
 
+    # MACD signal
     ema12 = p.ewm(span=12, adjust=False).mean()
     ema26 = p.ewm(span=26, adjust=False).mean()
     macd = ema12 - ema26
@@ -148,9 +152,11 @@ def calculate_technicals(p: pd.Series):
     else:
         res["macd_sig"] = "↑" if macd.iloc[-1] > sig.iloc[-1] else "↓"
 
+    # --- CROSSOVER LOGIC HELPER ---
     def get_crossover_status(short_ma, long_ma, fresh_days=SIGNAL_FRESH_DAYS):
         up = (short_ma.shift(1) <= long_ma.shift(1)) & (short_ma > long_ma)
         dn = (short_ma.shift(1) >= long_ma.shift(1)) & (short_ma < long_ma)
+
         if up.tail(fresh_days).any():
             return "Fresh↑"
         if dn.tail(fresh_days).any():
@@ -165,6 +171,9 @@ def calculate_technicals(p: pd.Series):
 
 
 def run_event_engine(p: pd.Series, ticker: str):
+    """
+    Events are detected over last NOTIF_LOOKBACK_DAYS.
+    """
     if len(p) < NOTIF_LOOKBACK_DAYS + 30:
         return []
 
@@ -174,7 +183,9 @@ def run_event_engine(p: pd.Series, ticker: str):
     sig = macd.ewm(span=9, adjust=False).mean()
     hist = macd - sig
 
+    # Gap series = hist / price
     gap_series = hist / p
+
     if len(gap_series) <= NOTIF_LOOKBACK_DAYS:
         return []
 
@@ -193,6 +204,7 @@ def run_event_engine(p: pd.Series, ticker: str):
 
     events = []
 
+    # --- Flip event ---
     if last_up or last_dn:
         if last_up and (not last_dn or last_up > last_dn):
             direction = "Bullish"
@@ -212,6 +224,7 @@ def run_event_engine(p: pd.Series, ticker: str):
                     "delta": float(delta_5d),
                 })
 
+    # --- Momentum state today ---
     h_now = hist.iloc[-1]
     direction = None
     if h_now > 0 and delta_5d > 0:
@@ -224,16 +237,15 @@ def run_event_engine(p: pd.Series, ticker: str):
         direction = "Less Bearish"
 
     if direction:
-        if pd.notna(gap_now) and pd.notna(delta_5d):
-            if (abs(gap_now) >= MIN_MACD_GAP_THRESHOLD) and (abs(delta_5d) >= MIN_MACD_DELTA_THRESHOLD):
-                events.append({
-                    "ticker": ticker,
-                    "type": "Momentum",
-                    "dir": direction,
-                    "date": p.index[-1],
-                    "gap": float(gap_now),
-                    "delta": float(delta_5d),
-                })
+        if (abs(gap_now) >= MIN_MACD_GAP_THRESHOLD) and (abs(delta_5d) >= MIN_MACD_DELTA_THRESHOLD):
+            events.append({
+                "ticker": ticker,
+                "type": "Momentum",
+                "dir": direction,
+                "date": p.index[-1],
+                "gap": float(gap_now),
+                "delta": float(delta_5d),
+            })
 
     return events
 
@@ -308,7 +320,8 @@ def make_ticker_link(ticker):
 
 BUCKET_COLGROUP = """
 <colgroup>
-  <col style="width:72px;">   <col style="width:170px;">  <col style="width:70px;">   <col style="width:70px;">   <col style="width:70px;">   <col style="width:70px;">
+  <col style="width:110px;">  <col style="width:72px;">   <col style="width:170px;">
+  <col style="width:70px;">   <col style="width:70px;">   <col style="width:70px;">   <col style="width:70px;">
   <col style="width:80px;">   <col style="width:80px;">   <col style="width:80px;">   <col style="width:90px;">
   <col style="width:70px;">   <col style="width:70px;">   <col style="width:70px;">   <col style="width:70px;">   <col style="width:60px;">
 </colgroup>
@@ -376,7 +389,7 @@ def build_final_html():
 
     df_tracker = pd.DataFrame(tracker_rows).merge(universe, on="ticker", how="left")
 
-    # --- FIX APPLIED HERE: merge with a 1-to-1 mapping (no duplicates for 3033.HK, AGG, XLE, etc.)
+    # Fix duplicated update lines (3033.HK etc.)
     df_updates = (
         pd.DataFrame(update_events).merge(UNIVERSE_BUCKET_1TO1, on="ticker", how="left")
         if update_events
@@ -444,6 +457,14 @@ def build_final_html():
     tracker_html = ""
     buckets = ["Equity", "Theme", "Region", "Rates", "Commodity", "UOBKH All-ETF Portfolio"]
 
+    def trend_label_from_row(r):
+        v = str(r.get("macd_sig", ""))
+        if "↓" in v:
+            return '<span class="trend-pill bearish">Bearish</span>'
+        if "↑" in v:
+            return '<span class="trend-pill bullish">Bullish</span>'
+        return '<span class="trend-pill neutral">Neutral</span>'
+
     for bucket in buckets:
         sub = df_tracker[df_tracker["bucket"] == bucket]
         if sub.empty:
@@ -452,7 +473,7 @@ def build_final_html():
         tracker_html += f"<div class='bucket-title'>{bucket}</div>"
         tracker_html += f"<table class='data-table bucket-table'>{BUCKET_COLGROUP}<thead><tr>"
 
-        tracker_html += "<th>Ticker</th><th>Sector</th>"
+        tracker_html += "<th>Trend</th><th>Ticker</th><th>Sector</th>"
         tracker_html += "<th class='vdiv'>1M</th><th>3M</th><th>6M</th><th>12M</th>"
         tracker_html += "<th class='vdiv'>ΔEMA10</th><th>ΔEMA20</th><th>ΔEMA50</th><th>ΔEMA200</th>"
         tracker_html += "<th class='vdiv'>10/20</th><th>20/50</th><th>50/200</th><th>MACD</th><th>BO</th>"
@@ -460,6 +481,7 @@ def build_final_html():
 
         for _, r in sub.iterrows():
             tracker_html += "<tr>"
+            tracker_html += f"<td>{trend_label_from_row(r)}</td>"
             tracker_html += f"<td><b>{make_ticker_link(r['ticker'])}</b></td>"
             tracker_html += f"<td>{r['sector']}</td>"
 
@@ -712,22 +734,43 @@ def build_final_html():
     <!DOCTYPE html>
     <html>
     <head>
-    <title>ETF Strategy Dashboard</title>
+    <title>Products Team Trend Spotter</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <style>
-        body {{ font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif; background-color: #f3f4f6; margin: 0; padding: 20px; color: #111827; }}
-        .container {{ max-width: 1200px; margin: 0 auto; background: white; padding: 25px; border-radius: 12px; box-shadow: 0 4px 6px rgba(0,0,0,0.05); }}
+        body {{ font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif; background-color: #f3f4f6; margin: 0; padding: 14px; color: #111827; }}
+        .container {{ max-width: 1200px; margin: 0 auto; background: white; padding: 16px; border-radius: 12px; box-shadow: 0 4px 6px rgba(0,0,0,0.05); }}
 
-        .tab-header {{ display: flex; border-bottom: 2px solid #e5e7eb; margin-bottom: 20px; }}
-        .tab-btn {{ background: none; border: none; padding: 12px 24px; font-size: 16px; font-weight: 600; color: #6b7280; cursor: pointer; transition: all 0.2s; }}
+        .tab-header {{ display: flex; border-bottom: 2px solid #e5e7eb; margin-bottom: 14px; overflow-x:auto; -webkit-overflow-scrolling:touch; }}
+        .tab-btn {{ background: none; border: none; padding: 12px 18px; font-size: 16px; font-weight: 600; color: #6b7280; cursor: pointer; transition: all 0.2s; white-space:nowrap; }}
         .tab-btn:hover {{ color: #111827; background: #f9fafb; }}
         .tab-btn.active {{ color: #2563eb; border-bottom: 2px solid #2563eb; margin-bottom: -2px; }}
         .tab-content {{ display: none; animation: fadeIn 0.4s; }}
         .tab-content.active {{ display: block; }}
 
-        .bucket-title {{ background: #eef2ff; color: #111827; font-weight: bold; font-size: 14px; padding: 8px 12px; margin-top: 15px; border-left: 4px solid #c7d2fe; }}
+        .bucket-title {{ background: #eef2ff; color: #111827; font-weight: bold; font-size: 14px; padding: 8px 12px; margin-top: 14px; border-left: 4px solid #c7d2fe; }}
+
+        .trend-pill {{
+            display:inline-block;
+            padding:2px 8px;
+            border-radius:999px;
+            font-weight:700;
+            font-size:11px;
+            line-height:18px;
+        }}
+        .trend-pill.bullish {{ background:#dcfce7; color:#166534; }}
+        .trend-pill.bearish {{ background:#fee2e2; color:#991b1b; }}
+        .trend-pill.neutral {{ background:#e5e7eb; color:#374151; }}
+
+        .table-wrap {{
+            width: 100%;
+            overflow-x: auto;
+            -webkit-overflow-scrolling: touch;
+            border-radius: 10px;
+        }}
 
         .data-table {{
             width: 100%;
+            min-width: 1080px;
             border-collapse: collapse;
             font-size: 13px;
             margin-bottom: 6px;
@@ -754,14 +797,37 @@ def build_final_html():
         .vdiv {{ border-left: 2px solid #e5e7eb !important; }}
         .data-table th.vdiv {{ border-left: 2px solid #334155 !important; }}
 
-        .update-table {{ width: 100%; border-collapse: collapse; font-size: 13px; font-family: 'Helvetica Neue', sans-serif; }}
+        .update-table-wrap {{
+            width: 100%;
+            overflow-x: auto;
+            -webkit-overflow-scrolling: touch;
+            border-radius: 10px;
+        }}
+        .update-table {{
+            width: 100%;
+            min-width: 900px;
+            border-collapse: collapse;
+            font-size: 13px;
+            font-family: 'Helvetica Neue', sans-serif;
+        }}
         .update-table th {{ background-color: #0f172a; color: white; padding: 10px; text-align: left; font-weight: 600; }}
         .update-table td {{ padding: 10px; border-bottom: 1px solid #e2e8f0; vertical-align: middle; }}
         .update-table tr:nth-child(even) {{ background-color: #f8fafc; }}
         .update-table tr:hover {{ background-color: #f1f5f9; }}
 
-        .controls {{ margin-bottom: 10px; padding: 15px; background: #f8fafc; border-radius: 8px; border: 1px solid #e2e8f0; display: flex; align-items: center; justify-content: space-between; }}
-        select {{ padding: 8px; border-radius: 4px; border: 1px solid #d1d5db; font-size: 14px; width: 200px; }}
+        .controls {{
+            margin-bottom: 10px;
+            padding: 12px;
+            background: #f8fafc;
+            border-radius: 8px;
+            border: 1px solid #e2e8f0;
+            display: flex;
+            gap: 10px;
+            align-items: center;
+            justify-content: space-between;
+            flex-wrap: wrap;
+        }}
+        select {{ padding: 10px; border-radius: 6px; border: 1px solid #d1d5db; font-size: 14px; width: 220px; max-width: 100%; }}
 
         .holdings-header {{ margin-top: 10px; font-weight: 600; }}
 
@@ -772,13 +838,21 @@ def build_final_html():
         }}
 
         @keyframes fadeIn {{ from {{ opacity: 0; }} to {{ opacity: 1; }} }}
+
+        /* Phone-friendly: reduce padding and allow scroll */
+        @media (max-width: 640px) {{
+            body {{ padding: 10px; }}
+            .container {{ padding: 12px; }}
+            .tab-btn {{ padding: 10px 14px; font-size: 15px; }}
+            h2 {{ font-size: 18px; }}
+        }}
     </style>
     </head>
     <body>
 
     <div class="container">
-        <div style="display:flex; justify-content:space-between; align-items:center;">
-            <h2 style="margin:0">📊 ETF Strategic Dashboard</h2>
+        <div style="display:flex; justify-content:space-between; align-items:center; gap:10px; flex-wrap:wrap;">
+            <h2 style="margin:0">📊 Products Team Trend Spotter</h2>
             <span style="color:#6b7280; font-size:12px">Generated: {date.today()}</span>
         </div>
         <br>
@@ -789,22 +863,24 @@ def build_final_html():
         </div>
 
         <div id="tracker" class="tab-content active">
-            {updates_html}
+            <div class="update-table-wrap">
+                {updates_html.replace("<table class='update-table'>", "<table class='update-table'>")}
+            </div>
             {tracker_html}
         </div>
 
         <div id="analyzer" class="tab-content">
             <div class="controls">
-                <div class="select-wrapper">
-                    <label>Select ETF:</label>
+                <div class="select-wrapper" style="display:flex; gap:10px; align-items:center; flex-wrap:wrap;">
+                    <label style="font-weight:600;">Select ETF:</label>
                     <select id="etfSelector" onchange="updateChart()">{dropdown_options}</select>
                 </div>
                 <div style="font-size:12px; color:gray;">Updates Chart & Holdings</div>
             </div>
-            <h3 id="chartTitle" style="margin-left:40px; margin-bottom:0;">Technical Analysis</h3>
+            <h3 id="chartTitle" style="margin-left:0px; margin-bottom:0;">Technical Analysis</h3>
             {chart_div}
             <hr style="margin: 20px 0; border:0; border-top:1px solid #e5e7eb;">
-            <div id="holdingsContainer"></div>
+            <div id="holdingsContainer" class="table-wrap"></div>
         </div>
     </div>
 
@@ -847,6 +923,11 @@ def build_final_html():
             var container = document.getElementById("holdingsContainer");
             container.innerHTML = holdingsData[selectedTicker] || "<p>No holdings data.</p>";
 
+            // Ensure holdings table scroll wrapper (if table exists)
+            if(container.querySelector("table")) {{
+                container.classList.add("table-wrap");
+            }}
+
             var totalTraces = tickers.length * tracesPerItem;
             var visibilityArray = new Array(totalTraces).fill(false);
 
@@ -871,15 +952,18 @@ def build_final_html():
     </html>
     """
 
+    # Wrap tracker tables in horizontal scroll container (phone friendly) WITHOUT changing table internals
+    # Only adds a wrapper div around each bucket table after generation.
+    final_html = final_html.replace("<table class='data-table bucket-table'>", "<div class='table-wrap'><table class='data-table bucket-table'>")
+    final_html = final_html.replace("</table><div class='footnote'>", "</table></div><div class='footnote'>")
+
+    # Also wrap the updates table (phone friendly)
+    final_html = final_html.replace("<table class='update-table'>", "<div class='update-table-wrap'><table class='update-table'>")
+    final_html = final_html.replace("</table><div class='footnote'>", "</table></div><div class='footnote'>")
+
     return final_html
 
 
-with st.sidebar:
-    st.markdown("### Controls")
-    if st.button("🔄 Refresh now (clear cache)", use_container_width=True):
-        st.cache_data.clear()
-        st.rerun()
-    st.caption("Dashboard HTML is generated server-side and rendered below (same look as your original).")
-
+# No sidebar (per request)
 html = build_final_html()
-components.html(html, height=1600, scrolling=True)
+components.html(html, height=1700, scrolling=True)
