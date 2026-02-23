@@ -875,12 +875,13 @@ def build_final_html():
 
 
 with st.sidebar:
-    st.markdown("### Controls")
-    if st.button("🔄 Refresh now (clear cache)", use_container_width=True):
+    st.markdown("### Update")
+    if st.button("🔄 Refresh data", use_container_width=True):
         st.cache_data.clear()
         st.rerun()
-    st.caption("Dashboard HTML is generated server-side and rendered below (same look as your original).")
+    st.caption("Updates automatically.")
 
 html = build_final_html()
 components.html(html, height=1600, scrolling=True)
+
 
