@@ -409,25 +409,74 @@ def build_final_html():
     )
 
     # --- Holdings (top 10)
+    def fetch_top10_holdings_yf(ticker: str):
+        tk = yf.Ticker(ticker)
+        fd = getattr(tk, "funds_data", None)
+        if not fd:
+            return []
+    
+        # 1) Try top_holdings
+        try:
+            h = getattr(fd, "top_holdings", None)
+            if h is not None and hasattr(h, "empty") and not h.empty:
+                h = h.reset_index(drop=True)
+    
+                out = []
+                for _, r in h.head(10).iterrows():
+                    sym = str(r.get("Symbol", r.get("symbol", ""))).strip()
+                    nm  = str(r.get("Name", r.get("name", ""))).strip()
+    
+                    w = r.get("Holding Percent", r.get("holdingPercent", r.get("weight", np.nan)))
+                    w = pd.to_numeric(w, errors="coerce")
+    
+                    if sym:
+                        out.append({"symbol": sym, "name": nm, "weight": float(w) if pd.notna(w) else np.nan})
+                if out:
+                    return out
+        except:
+            pass
+    
+        # 2) Fallback: equity_holdings (some versions return holdings here)
+        try:
+            eh = getattr(fd, "equity_holdings", None)
+            if eh is not None and hasattr(eh, "empty") and not eh.empty:
+                eh = eh.copy().reset_index(drop=True)
+    
+                # column name guesses
+                sym_col = "symbol" if "symbol" in eh.columns else ("Symbol" if "Symbol" in eh.columns else None)
+                name_col = "name" if "name" in eh.columns else ("Name" if "Name" in eh.columns else None)
+    
+                w_col = None
+                for c in ["Holding Percent", "holdingPercent", "weight", "Weight", "percent", "Percent"]:
+                    if c in eh.columns:
+                        w_col = c
+                        break
+    
+                if sym_col and w_col:
+                    eh[w_col] = pd.to_numeric(eh[w_col], errors="coerce")
+                    eh = eh.sort_values(w_col, ascending=False).head(10)
+    
+                    out = []
+                    for _, r in eh.iterrows():
+                        sym = str(r.get(sym_col, "")).strip()
+                        nm  = str(r.get(name_col, "")).strip() if name_col else ""
+                        w   = r.get(w_col, np.nan)
+                        if sym:
+                            out.append({"symbol": sym, "name": nm, "weight": float(w) if pd.notna(w) else np.nan})
+                    return out
+        except:
+            pass
+    
+        return []
+    
+    
+    # --- Holdings (top 10) ---
     etf_holdings_map = {}
     for t in TICKERS:
         try:
-            tk = yf.Ticker(t)
-            if hasattr(tk, "funds_data") and tk.funds_data:
-                h = tk.funds_data.top_holdings
-                if h is not None and not h.empty:
-                    h = h.reset_index()
-                    top_10 = []
-                    for _, r in h.head(10).iterrows():
-                        top_10.append({
-                            "symbol": str(r.get("Symbol", "")).strip(),
-                            "name": str(r.get("Name", "")).strip(),
-                            "weight": float(r.get("Holding Percent", np.nan)),
-                        })
-                    etf_holdings_map[t] = top_10
-        except Exception:
+            etf_holdings_map[t] = fetch_top10_holdings_yf(t)
+        except:
             etf_holdings_map[t] = []
-
     # --- Holdings technicals
     all_holdings = []
     for etf_t, holdings in etf_holdings_map.items():
@@ -914,3 +963,4 @@ with st.sidebar:
 # =============================================================================
 html = build_final_html()
 components.html(html, height=2200, scrolling=True)
+
