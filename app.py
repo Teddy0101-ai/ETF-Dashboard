@@ -78,7 +78,7 @@ universe_data = [
     ("Rates", "Intermediate Treasuries", "IEF", "BlackRock iShares® 7-10 Year Treasury Bond ETF"),
     ("Rates", "Long Treasuries", "TLT", "BlackRock iShares® 20+ Year Treasury Bond ETF"),
     ("Rates", "TIPS", "TIP", "BlackRock iShares® TIPS Bond ETF"),
-    ("Rates", "STRIPS", "GOVZ", "BlackRock iShares® 25+ Year Treasury STRIPS Bond ETF"),
+    ("Rates", "STRIPS", "GOVZ", "BlackRock iShares® 25+ Year treasury STRIPS Bond ETF"),
     ("Rates", "Medium Investment Grade Credit", "LQD", "BlackRock iShares® iBoxx $ Investment Grade Corporate Bond ETF"),
     ("Rates", "High Yield Credit", "HYG", "BlackRock iShares® iBoxx $ High Yield Corporate Bond ETF"),
     ("Rates", "Short Investment Grade Credit", "VCSH", "Vanguard® Short-Term Corporate Bond ETF"),
@@ -470,7 +470,10 @@ def build_final_html():
         if sub.empty:
             continue
 
-        tracker_html += f"<div class='bucket-title'>{bucket}</div>"
+        # (Phone less scroll) wrap each bucket in <details>, JS will auto-collapse on phone
+        tracker_html += f"<details class='bucket-details' data-bucket='{bucket}' open>"
+        tracker_html += f"<summary class='bucket-summary'><div class='bucket-title'>{bucket}</div></summary>"
+
         tracker_html += f"<table class='data-table bucket-table'>{BUCKET_COLGROUP}<thead><tr>"
 
         tracker_html += "<th>Trend</th><th>Ticker</th><th>Sector</th>"
@@ -504,6 +507,7 @@ def build_final_html():
 
         tracker_html += "</tbody></table>"
         tracker_html += f"<div class='footnote'>{BUCKET_FOOTNOTE}</div>"
+        tracker_html += "</details>"
 
     updates_html = (
         f"<h3 style='margin-top:0'>MACD Event Updates Over The Last 5 Trading Days "
@@ -624,7 +628,13 @@ def build_final_html():
 
     for etf_ticker in TICKERS:
         holdings = etf_holdings_map.get(etf_ticker, [])
-        h_html = f"<div class='holdings-header'>Top 10 Holdings: <b>{etf_ticker}</b></div>"
+        # (Phone less scroll) make holdings collapsible; JS will auto-collapse on phone
+        h_html = f"""
+        <details class="holdings-details" open>
+            <summary class="holdings-summary">
+                <div class='holdings-header'>Top 10 Holdings: <b>{etf_ticker}</b></div>
+            </summary>
+        """
 
         if not holdings:
             h_html += "<p style='color:gray; font-size:12px; padding:10px;'><i>Holdings data unavailable via API.</i></p>"
@@ -657,6 +667,7 @@ def build_final_html():
 
             h_html += "</tbody></table>"
 
+        h_html += "</details>"
         holdings_html_map[etf_ticker] = h_html
 
     # =============================================================================
@@ -738,9 +749,9 @@ def build_final_html():
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <style>
         body {{ font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif; background-color: #f3f4f6; margin: 0; padding: 14px; color: #111827; }}
-        .container {{ max-width: 1200px; margin: 0 auto; background: white; padding: 16px; border-radius: 12px; box-shadow: 0 4px 6px rgba(0,0,0,0.05); }}
+        .container { max-width: 1500px; width: calc(100vw - 28px); margin: 0 auto; background: white; padding: 16px; border-radius: 12px; box-shadow: 0 4px 6px rgba(0,0,0,0.05); }
 
-        .tab-header {{ display: flex; border-bottom: 2px solid #e5e7eb; margin-bottom: 14px; overflow-x:auto; -webkit-overflow-scrolling:touch; }}
+        .tab-header {{ display: flex; border-bottom: 2px solid #e5e7eb; margin-bottom: 14px; overflow-x:auto; -webkit-overflow-scrolling:touch; position: sticky; top: 0; background: #fff; z-index: 5; }}
         .tab-btn {{ background: none; border: none; padding: 12px 18px; font-size: 16px; font-weight: 600; color: #6b7280; cursor: pointer; transition: all 0.2s; white-space:nowrap; }}
         .tab-btn:hover {{ color: #111827; background: #f9fafb; }}
         .tab-btn.active {{ color: #2563eb; border-bottom: 2px solid #2563eb; margin-bottom: -2px; }}
@@ -748,6 +759,10 @@ def build_final_html():
         .tab-content.active {{ display: block; }}
 
         .bucket-title {{ background: #eef2ff; color: #111827; font-weight: bold; font-size: 14px; padding: 8px 12px; margin-top: 14px; border-left: 4px solid #c7d2fe; }}
+        .bucket-summary {{ list-style: none; cursor: pointer; }}
+        .bucket-summary::-webkit-details-marker {{ display:none; }}
+        .bucket-details {{ border: 1px solid #eef2ff; border-radius: 12px; padding: 0 0 10px 0; margin-top: 10px; }}
+        .bucket-details[open] .bucket-title {{ border-bottom-left-radius: 0; border-bottom-right-radius: 0; }}
 
         .trend-pill {{
             display:inline-block;
@@ -826,10 +841,16 @@ def build_final_html():
             align-items: center;
             justify-content: space-between;
             flex-wrap: wrap;
+            position: sticky;
+            top: 52px;
+            z-index: 4;
         }}
         select {{ padding: 10px; border-radius: 6px; border: 1px solid #d1d5db; font-size: 14px; width: 220px; max-width: 100%; }}
 
         .holdings-header {{ margin-top: 10px; font-weight: 600; }}
+        .holdings-summary {{ list-style: none; cursor: pointer; }}
+        .holdings-summary::-webkit-details-marker {{ display:none; }}
+        .holdings-details {{ border: 1px solid #e5e7eb; border-radius: 12px; padding: 6px 10px; background: #fff; }}
 
         .footnote {{
             font-size: 11px;
@@ -839,12 +860,13 @@ def build_final_html():
 
         @keyframes fadeIn {{ from {{ opacity: 0; }} to {{ opacity: 1; }} }}
 
-        /* Phone-friendly: reduce padding and allow scroll */
+        /* Phone-friendly: reduce padding */
         @media (max-width: 640px) {{
             body {{ padding: 10px; }}
             .container {{ padding: 12px; }}
             .tab-btn {{ padding: 10px 14px; font-size: 15px; }}
             h2 {{ font-size: 18px; }}
+            .controls {{ top: 48px; }}
         }}
     </style>
     </head>
@@ -863,9 +885,12 @@ def build_final_html():
         </div>
 
         <div id="tracker" class="tab-content active">
-            <div class="update-table-wrap">
-                {updates_html.replace("<table class='update-table'>", "<table class='update-table'>")}
-            </div>
+            <details class="updates-details" open>
+                <summary class="bucket-summary"><div class="bucket-title">MACD Event Updates</div></summary>
+                <div class="update-table-wrap">
+                    {updates_html.replace("<table class='update-table'>", "<table class='update-table'>")}
+                </div>
+            </details>
             {tracker_html}
         </div>
 
@@ -940,12 +965,28 @@ def build_final_html():
             Plotly.restyle(plotDiv, {{'visible': visibilityArray}});
         }}
 
+        function collapseForPhone() {{
+            try {{
+                if (window.innerWidth <= 640) {{
+                    // Collapse updates + all buckets by default on phone to reduce vertical scrolling
+                    document.querySelectorAll("details.updates-details, details.bucket-details").forEach(function(d) {{
+                        d.removeAttribute("open");
+                    }});
+                    // Keep holdings collapsed by default too; user opens when needed
+                    document.querySelectorAll("details.holdings-details").forEach(function(d) {{
+                        d.removeAttribute("open");
+                    }});
+                }}
+            }} catch(e) {{}}
+        }}
+
         window.onload = function() {{
             var first = tickers[0];
             if(first) {{
                 document.getElementById("etfSelector").value = first;
                 updateChart();
             }}
+            collapseForPhone();
         }};
     </script>
     </body>
@@ -953,7 +994,6 @@ def build_final_html():
     """
 
     # Wrap tracker tables in horizontal scroll container (phone friendly) WITHOUT changing table internals
-    # Only adds a wrapper div around each bucket table after generation.
     final_html = final_html.replace("<table class='data-table bucket-table'>", "<div class='table-wrap'><table class='data-table bucket-table'>")
     final_html = final_html.replace("</table><div class='footnote'>", "</table></div><div class='footnote'>")
 
