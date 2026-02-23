@@ -6,6 +6,7 @@ from plotly.subplots import make_subplots
 from datetime import date
 import json
 import warnings
+import sys
 import re
 
 import streamlit as st
@@ -13,11 +14,8 @@ import streamlit.components.v1 as components
 
 warnings.simplefilter(action="ignore", category=FutureWarning)
 
-# =============================================================================
-# Streamlit Page Setup (no sidebar)
-# =============================================================================
 st.set_page_config(
-    page_title="Products Team Trend Spotter",
+    page_title="ETF Strategy Dashboard",
     page_icon="📊",
     layout="wide",
 )
@@ -103,7 +101,7 @@ universe = pd.DataFrame(universe_data, columns=["bucket", "sector", "ticker", "n
 TICKERS = sorted(universe["ticker"].unique().tolist())
 TICKER_TO_NAME = dict(zip(universe.drop_duplicates("ticker")["ticker"], universe.drop_duplicates("ticker")["name"]))
 
-# Fix: ensure 1-to-1 bucket mapping for updates merge (prevents duplicated 3033.HK / AGG / XLE)
+# --- FIX: ensure 1-to-1 bucket mapping for updates merge (prevents duplicated 3033.HK lines) ---
 UNIVERSE_BUCKET_1TO1 = universe[["ticker", "bucket"]].drop_duplicates("ticker")
 
 # =============================================================================
@@ -301,21 +299,6 @@ def style_sig(val):
     return '<span style="color:#d1d5db">-</span>'
 
 
-def style_trend_label(macd_sig: str, sig_50_200: str) -> str:
-    """
-    NEW: Bullish/Bearish indicator column (left of ticker).
-    Rule (minimal / stable):
-      - Bullish if MACD is ↑ or Fresh↑ OR 50/200 is ↑ or Fresh↑
-      - Else Bearish
-    """
-    m = "" if macd_sig is None else str(macd_sig)
-    s = "" if sig_50_200 is None else str(sig_50_200)
-    bullish = ("↑" in m) or ("↑" in s)
-    if bullish:
-        return '<span style="display:inline-block; padding:2px 8px; border-radius:999px; font-weight:700; font-size:11px; background:#dcfce7; color:#166534;">Bullish</span>'
-    return '<span style="display:inline-block; padding:2px 8px; border-radius:999px; font-weight:700; font-size:11px; background:#fee2e2; color:#991b1b;">Bearish</span>'
-
-
 def make_ticker_link(ticker):
     return (
         f"<a href=\"#\" onclick=\"goToChart('{ticker}'); return false;\" "
@@ -323,19 +306,16 @@ def make_ticker_link(ticker):
     )
 
 
-# Updated ColGroup: add Trend column on the left
 BUCKET_COLGROUP = """
 <colgroup>
-  <col style="width:90px;">   <col style="width:72px;">   <col style="width:170px;">
-  <col style="width:70px;">   <col style="width:70px;">   <col style="width:70px;">   <col style="width:70px;">
+  <col style="width:72px;">   <col style="width:170px;">  <col style="width:70px;">   <col style="width:70px;">   <col style="width:70px;">   <col style="width:70px;">
   <col style="width:80px;">   <col style="width:80px;">   <col style="width:80px;">   <col style="width:90px;">
   <col style="width:70px;">   <col style="width:70px;">   <col style="width:70px;">   <col style="width:70px;">   <col style="width:60px;">
 </colgroup>
 """
 
 BUCKET_FOOTNOTE = (
-    "* Trend = based on MACD + 50/200 (Bullish if either shows ↑/Fresh↑, else Bearish) | "
-    "∆EMA = (Price / EMA) − 1 | Fresh↑ / Fresh↓ = crossover within last 10 trading days | "
+    "* ∆EMA = (Price / EMA) − 1 | Fresh↑ / Fresh↓ = crossover within last 10 trading days | "
     "50/200 = EMA50 vs EMA200 (Golden/Death Cross) | MACD = MACD(12,26,9) line vs signal | Breakout = close > prior 20D high."
 )
 
@@ -396,7 +376,7 @@ def build_final_html():
 
     df_tracker = pd.DataFrame(tracker_rows).merge(universe, on="ticker", how="left")
 
-    # Fix duplication for updates
+    # --- FIX APPLIED HERE: merge with a 1-to-1 mapping (no duplicates for 3033.HK, AGG, XLE, etc.)
     df_updates = (
         pd.DataFrame(update_events).merge(UNIVERSE_BUCKET_1TO1, on="ticker", how="left")
         if update_events
@@ -472,17 +452,14 @@ def build_final_html():
         tracker_html += f"<div class='bucket-title'>{bucket}</div>"
         tracker_html += f"<table class='data-table bucket-table'>{BUCKET_COLGROUP}<thead><tr>"
 
-        tracker_html += "<th>Trend</th><th>Ticker</th><th>Sector</th>"
+        tracker_html += "<th>Ticker</th><th>Sector</th>"
         tracker_html += "<th class='vdiv'>1M</th><th>3M</th><th>6M</th><th>12M</th>"
         tracker_html += "<th class='vdiv'>ΔEMA10</th><th>ΔEMA20</th><th>ΔEMA50</th><th>ΔEMA200</th>"
         tracker_html += "<th class='vdiv'>10/20</th><th>20/50</th><th>50/200</th><th>MACD</th><th>BO</th>"
         tracker_html += "</tr></thead><tbody>"
 
         for _, r in sub.iterrows():
-            trend_html = style_trend_label(r.get("macd_sig", "-"), r.get("sig_50_200", "-"))
-
             tracker_html += "<tr>"
-            tracker_html += f"<td><b>{trend_html}</b></td>"
             tracker_html += f"<td><b>{make_ticker_link(r['ticker'])}</b></td>"
             tracker_html += f"<td>{r['sector']}</td>"
 
@@ -546,6 +523,7 @@ def build_final_html():
             "abs_gap": "first",
             "desc_html": lambda x: "<br>".join(x),
         })
+
         df_grouped = df_grouped.sort_values("abs_gap", ascending=False)
 
         for _, r in df_grouped.iterrows():
@@ -686,8 +664,14 @@ def build_final_html():
         viz = (i == 0)
 
         fig.add_trace(go.Candlestick(
-            x=df.index, open=df["Open"], high=df["High"], low=df["Low"], close=df["Close"],
-            name="Price", visible=viz, showlegend=True
+            x=df.index,
+            open=df["Open"],
+            high=df["High"],
+            low=df["Low"],
+            close=df["Close"],
+            name="Price",
+            visible=viz,
+            showlegend=True,
         ), row=1, col=1)
 
         fig.add_trace(go.Scatter(x=df.index, y=ema10, line=dict(color="#3b82f6", width=1),
@@ -724,21 +708,17 @@ def build_final_html():
     tickers_json = json.dumps(valid_tickers)
     names_json = json.dumps(TICKER_TO_NAME)
 
-    # =============================================================================
-    # 8. ASSEMBLE HTML (mobile friendly + new name)
-    # =============================================================================
     final_html = f"""
     <!DOCTYPE html>
     <html>
     <head>
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Products Team Trend Spotter</title>
+    <title>ETF Strategy Dashboard</title>
     <style>
         body {{ font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif; background-color: #f3f4f6; margin: 0; padding: 20px; color: #111827; }}
         .container {{ max-width: 1200px; margin: 0 auto; background: white; padding: 25px; border-radius: 12px; box-shadow: 0 4px 6px rgba(0,0,0,0.05); }}
 
-        .tab-header {{ display: flex; border-bottom: 2px solid #e5e7eb; margin-bottom: 20px; overflow-x:auto; -webkit-overflow-scrolling: touch; }}
-        .tab-btn {{ flex: 0 0 auto; background: none; border: none; padding: 12px 18px; font-size: 16px; font-weight: 600; color: #6b7280; cursor: pointer; transition: all 0.2s; white-space:nowrap; }}
+        .tab-header {{ display: flex; border-bottom: 2px solid #e5e7eb; margin-bottom: 20px; }}
+        .tab-btn {{ background: none; border: none; padding: 12px 24px; font-size: 16px; font-weight: 600; color: #6b7280; cursor: pointer; transition: all 0.2s; }}
         .tab-btn:hover {{ color: #111827; background: #f9fafb; }}
         .tab-btn.active {{ color: #2563eb; border-bottom: 2px solid #2563eb; margin-bottom: -2px; }}
         .tab-content {{ display: none; animation: fadeIn 0.4s; }}
@@ -780,7 +760,7 @@ def build_final_html():
         .update-table tr:nth-child(even) {{ background-color: #f8fafc; }}
         .update-table tr:hover {{ background-color: #f1f5f9; }}
 
-        .controls {{ margin-bottom: 10px; padding: 15px; background: #f8fafc; border-radius: 8px; border: 1px solid #e2e8f0; display: flex; align-items: center; justify-content: space-between; gap:12px; flex-wrap:wrap; }}
+        .controls {{ margin-bottom: 10px; padding: 15px; background: #f8fafc; border-radius: 8px; border: 1px solid #e2e8f0; display: flex; align-items: center; justify-content: space-between; }}
         select {{ padding: 8px; border-radius: 4px; border: 1px solid #d1d5db; font-size: 14px; width: 200px; }}
 
         .holdings-header {{ margin-top: 10px; font-weight: 600; }}
@@ -791,30 +771,14 @@ def build_final_html():
             margin: 4px 2px 12px 2px;
         }}
 
-        .table-scroll {{
-            width: 100%;
-            overflow-x: auto;
-            -webkit-overflow-scrolling: touch;
-        }}
-
         @keyframes fadeIn {{ from {{ opacity: 0; }} to {{ opacity: 1; }} }}
-
-        /* Mobile tweaks: keep exact look but allow horizontal scroll + tighter padding */
-        @media (max-width: 768px) {{
-            body {{ padding: 10px; }}
-            .container {{ padding: 14px; border-radius: 10px; }}
-            .data-table {{ font-size: 12px; }}
-            .update-table {{ font-size: 12px; }}
-            .controls {{ padding: 12px; }}
-            select {{ width: 180px; }}
-        }}
     </style>
     </head>
     <body>
 
     <div class="container">
-        <div style="display:flex; justify-content:space-between; align-items:center; gap:12px; flex-wrap:wrap;">
-            <h2 style="margin:0">📊 Products Team Trend Spotter</h2>
+        <div style="display:flex; justify-content:space-between; align-items:center;">
+            <h2 style="margin:0">📊 ETF Strategic Dashboard</h2>
             <span style="color:#6b7280; font-size:12px">Generated: {date.today()}</span>
         </div>
         <br>
@@ -825,8 +789,8 @@ def build_final_html():
         </div>
 
         <div id="tracker" class="tab-content active">
-            <div class="table-scroll">{updates_html}</div>
-            <div class="table-scroll">{tracker_html}</div>
+            {updates_html}
+            {tracker_html}
         </div>
 
         <div id="analyzer" class="tab-content">
@@ -837,10 +801,10 @@ def build_final_html():
                 </div>
                 <div style="font-size:12px; color:gray;">Updates Chart & Holdings</div>
             </div>
-            <h3 id="chartTitle" style="margin-left:0px; margin-bottom:0;">Technical Analysis</h3>
+            <h3 id="chartTitle" style="margin-left:40px; margin-bottom:0;">Technical Analysis</h3>
             {chart_div}
             <hr style="margin: 20px 0; border:0; border-top:1px solid #e5e7eb;">
-            <div id="holdingsContainer" class="table-scroll"></div>
+            <div id="holdingsContainer"></div>
         </div>
     </div>
 
@@ -910,5 +874,12 @@ def build_final_html():
     return final_html
 
 
-# Render HTML only (no sidebar)
-components.html(build_final_html(), height=1800, scrolling=True)
+with st.sidebar:
+    st.markdown("### Controls")
+    if st.button("🔄 Refresh now (clear cache)", use_container_width=True):
+        st.cache_data.clear()
+        st.rerun()
+    st.caption("Dashboard HTML is generated server-side and rendered below (same look as your original).")
+
+html = build_final_html()
+components.html(html, height=1600, scrolling=True)
