@@ -1005,6 +1005,14 @@ def build_final_html():
 
 # No sidebar (per request)
 html = build_final_html()
+# Download HTML button
+st.download_button(
+    label="⬇️ Download HTML",
+    data=html.encode("utf-8"),
+    file_name=f"trend_spotter_{date.today().isoformat()}.html",
+    mime="text/html",
+)
 components.html(html, height=1700, scrolling=True)
+
 
 
