@@ -749,7 +749,7 @@ def build_final_html():
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <style>
         body {{ font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif; background-color: #f3f4f6; margin: 0; padding: 14px; color: #111827; }}
-        .container { max-width: 1500px; width: calc(100vw - 28px); margin: 0 auto; background: white; padding: 16px; border-radius: 12px; box-shadow: 0 4px 6px rgba(0,0,0,0.05); }
+        .container {{ max-width: 1200px; margin: 0 auto; background: white; padding: 16px; border-radius: 12px; box-shadow: 0 4px 6px rgba(0,0,0,0.05); }}
 
         .tab-header {{ display: flex; border-bottom: 2px solid #e5e7eb; margin-bottom: 14px; overflow-x:auto; -webkit-overflow-scrolling:touch; position: sticky; top: 0; background: #fff; z-index: 5; }}
         .tab-btn {{ background: none; border: none; padding: 12px 18px; font-size: 16px; font-weight: 600; color: #6b7280; cursor: pointer; transition: all 0.2s; white-space:nowrap; }}
