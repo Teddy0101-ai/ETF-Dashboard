@@ -328,7 +328,7 @@ UPDATES_FOOTNOTE = (
 # =============================================================================
 # 5. DATA + HTML GENERATION (cached)
 # =============================================================================
-@st.cache_data(ttl=60 * 30, show_spinner=False)
+@st.cache_data(ttl=60 * 60 * 4, show_spinner=False)
 def build_final_html():
     raw_data = yf.download(
         TICKERS,
@@ -883,3 +883,4 @@ with st.sidebar:
 
 html = build_final_html()
 components.html(html, height=1600, scrolling=True)
+
