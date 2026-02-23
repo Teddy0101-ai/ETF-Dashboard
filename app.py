@@ -6,7 +6,6 @@ from plotly.subplots import make_subplots
 from datetime import date
 import json
 import warnings
-import sys
 import re
 
 import streamlit as st
@@ -14,9 +13,12 @@ import streamlit.components.v1 as components
 
 warnings.simplefilter(action="ignore", category=FutureWarning)
 
+# =============================================================================
+# Streamlit page
+# =============================================================================
 st.set_page_config(
-    page_title="ETF Strategy Dashboard",
-    page_icon="📊",
+    page_title="Products Team Trend Spotter",
+    page_icon="📈",
     layout="wide",
 )
 
@@ -99,9 +101,14 @@ universe_data = [
 
 universe = pd.DataFrame(universe_data, columns=["bucket", "sector", "ticker", "name"])
 TICKERS = sorted(universe["ticker"].unique().tolist())
-TICKER_TO_NAME = dict(zip(universe.drop_duplicates("ticker")["ticker"], universe.drop_duplicates("ticker")["name"]))
+TICKER_TO_NAME = dict(
+    zip(
+        universe.drop_duplicates("ticker")["ticker"],
+        universe.drop_duplicates("ticker")["name"],
+    )
+)
 
-# --- FIX: ensure 1-to-1 bucket mapping for updates merge (prevents duplicated 3033.HK lines) ---
+# FIX: 1-to-1 mapping for updates merge (prevents duplicated events for tickers appearing in multiple buckets)
 UNIVERSE_BUCKET_1TO1 = universe[["ticker", "bucket"]].drop_duplicates("ticker")
 
 # =============================================================================
@@ -114,25 +121,30 @@ def calculate_technicals(p: pd.Series):
     last_px = p.iloc[-1]
     res = {"last_px": float(last_px)}
 
+    # Momentum
     for lbl, d in MOMENTUM_WINDOWS.items():
         if len(p) > d:
             res[lbl] = (p.iloc[-1] / p.iloc[-d - 1]) - 1.0
         else:
             res[lbl] = np.nan
 
+    # EMAs
     ema10 = p.ewm(span=10, adjust=False).mean()
     ema20 = p.ewm(span=20, adjust=False).mean()
     ema50 = p.ewm(span=50, adjust=False).mean()
     ema200 = p.ewm(span=200, adjust=False).mean()
 
+    # Delta EMA (Distance)
     res["d_ema10"] = (last_px / ema10.iloc[-1]) - 1.0
     res["d_ema20"] = (last_px / ema20.iloc[-1]) - 1.0
     res["d_ema50"] = (last_px / ema50.iloc[-1]) - 1.0
     res["d_ema200"] = (last_px / ema200.iloc[-1]) - 1.0
 
+    # Breakout
     prior_high = p.shift(1).rolling(BREAKOUT_WINDOW).max().iloc[-1]
     res["breakout"] = "↑" if last_px > prior_high else "-"
 
+    # MACD signal
     ema12 = p.ewm(span=12, adjust=False).mean()
     ema26 = p.ewm(span=26, adjust=False).mean()
     macd = ema12 - ema26
@@ -193,6 +205,7 @@ def run_event_engine(p: pd.Series, ticker: str):
 
     events = []
 
+    # Flip
     if last_up or last_dn:
         if last_up and (not last_dn or last_up > last_dn):
             direction = "Bullish"
@@ -212,6 +225,7 @@ def run_event_engine(p: pd.Series, ticker: str):
                     "delta": float(delta_5d),
                 })
 
+    # Momentum state today
     h_now = hist.iloc[-1]
     direction = None
     if h_now > 0 and delta_5d > 0:
@@ -223,17 +237,16 @@ def run_event_engine(p: pd.Series, ticker: str):
     elif h_now < 0 and delta_5d > 0:
         direction = "Less Bearish"
 
-    if direction:
-        if pd.notna(gap_now) and pd.notna(delta_5d):
-            if (abs(gap_now) >= MIN_MACD_GAP_THRESHOLD) and (abs(delta_5d) >= MIN_MACD_DELTA_THRESHOLD):
-                events.append({
-                    "ticker": ticker,
-                    "type": "Momentum",
-                    "dir": direction,
-                    "date": p.index[-1],
-                    "gap": float(gap_now),
-                    "delta": float(delta_5d),
-                })
+    if direction and pd.notna(gap_now) and pd.notna(delta_5d):
+        if (abs(gap_now) >= MIN_MACD_GAP_THRESHOLD) and (abs(delta_5d) >= MIN_MACD_DELTA_THRESHOLD):
+            events.append({
+                "ticker": ticker,
+                "type": "Momentum",
+                "dir": direction,
+                "date": p.index[-1],
+                "gap": float(gap_now),
+                "delta": float(delta_5d),
+            })
 
     return events
 
@@ -264,7 +277,7 @@ def extract_series(raw, ticker):
 
 
 # =============================================================================
-# 4. HTML HELPERS
+# 4. HTML HELPERS (keep original look)
 # =============================================================================
 COLORS = {"green": "#047857", "red": "#b91c1c", "gray": "#6b7280", "blue": "#1d4ed8"}
 
@@ -299,6 +312,16 @@ def style_sig(val):
     return '<span style="color:#d1d5db">-</span>'
 
 
+def style_trend_from_macd(macd_sig: str):
+    base = "display:inline-block; padding:2px 8px; border-radius:999px; font-weight:700; font-size:11px;"
+    s = "" if macd_sig is None else str(macd_sig)
+    if "↑" in s:
+        return f'<span style="{base} background:#d1fae5; color:#065f46;">Bullish</span>'
+    if "↓" in s:
+        return f'<span style="{base} background:#fee2e2; color:#991b1b;">Bearish</span>'
+    return f'<span style="{base} background:#f3f4f6; color:#6b7280;">-</span>'
+
+
 def make_ticker_link(ticker):
     return (
         f"<a href=\"#\" onclick=\"goToChart('{ticker}'); return false;\" "
@@ -308,14 +331,18 @@ def make_ticker_link(ticker):
 
 BUCKET_COLGROUP = """
 <colgroup>
-  <col style="width:72px;">   <col style="width:170px;">  <col style="width:70px;">   <col style="width:70px;">   <col style="width:70px;">   <col style="width:70px;">
+  <col style="width:92px;">   <!-- Trend -->
+  <col style="width:72px;">   <!-- Ticker -->
+  <col style="width:170px;">  <!-- Sector -->
+  <col style="width:70px;">   <col style="width:70px;">   <col style="width:70px;">   <col style="width:70px;">
   <col style="width:80px;">   <col style="width:80px;">   <col style="width:80px;">   <col style="width:90px;">
   <col style="width:70px;">   <col style="width:70px;">   <col style="width:70px;">   <col style="width:70px;">   <col style="width:60px;">
 </colgroup>
 """
 
 BUCKET_FOOTNOTE = (
-    "* ∆EMA = (Price / EMA) − 1 | Fresh↑ / Fresh↓ = crossover within last 10 trading days | "
+    "* Trend = Bullish/Bearish from MACD direction | "
+    "∆EMA = (Price / EMA) − 1 | Fresh↑ / Fresh↓ = crossover within last 10 trading days | "
     "50/200 = EMA50 vs EMA200 (Golden/Death Cross) | MACD = MACD(12,26,9) line vs signal | Breakout = close > prior 20D high."
 )
 
@@ -326,17 +353,14 @@ UPDATES_FOOTNOTE = (
 )
 
 # =============================================================================
-# 5. DATA + HTML GENERATION (cached)
+# 5. BUILD HTML (cached)
 # =============================================================================
-@st.cache_data(ttl=60 * 30, show_spinner=False)
+@st.cache_data(ttl=60 * 60 * 4, show_spinner=False)  # 4 hours
 def build_final_html():
+    # --- Prices
     raw_data = yf.download(
-        TICKERS,
-        period=LOOKBACK_PERIOD,
-        interval="1d",
-        group_by="ticker",
-        auto_adjust=True,
-        progress=False,
+        TICKERS, period=LOOKBACK_PERIOD, interval="1d",
+        group_by="ticker", auto_adjust=True, progress=False
     )
 
     tracker_rows = []
@@ -370,22 +394,18 @@ def build_final_html():
                 tracker_rows.append(metrics)
 
             update_events.extend(run_event_engine(p, t))
-
         except Exception:
             continue
 
     df_tracker = pd.DataFrame(tracker_rows).merge(universe, on="ticker", how="left")
 
-    # --- FIX APPLIED HERE: merge with a 1-to-1 mapping (no duplicates for 3033.HK, AGG, XLE, etc.)
+    # FIX: 1-to-1 mapping merge to avoid duplicated update lines for multi-bucket tickers
     df_updates = (
         pd.DataFrame(update_events).merge(UNIVERSE_BUCKET_1TO1, on="ticker", how="left")
-        if update_events
-        else pd.DataFrame()
+        if update_events else pd.DataFrame()
     )
 
-    # =============================================================================
-    # 4. HOLDINGS EXTRACTION
-    # =============================================================================
+    # --- Holdings (EXACT SAME LOGIC AS YOUR WORKING SCRIPT)
     etf_holdings_map = {}
     for t in TICKERS:
         try:
@@ -405,27 +425,20 @@ def build_final_html():
         except Exception:
             etf_holdings_map[t] = []
 
-    # =============================================================================
-    # 4B. HOLDINGS TECHNICALS
-    # =============================================================================
+    # --- Holdings technicals
     all_holdings = []
     for etf_t, holdings in etf_holdings_map.items():
         for h in holdings:
             norm = normalize_holding_symbol(h.get("symbol", ""), etf_t)
             if norm:
                 all_holdings.append(norm)
-
     all_holdings = sorted(list(set(all_holdings)))
-    holding_metrics_map = {}
 
+    holding_metrics_map = {}
     if all_holdings:
         raw_hold = yf.download(
-            all_holdings,
-            period=LOOKBACK_PERIOD,
-            interval="1d",
-            group_by="ticker",
-            auto_adjust=True,
-            progress=False,
+            all_holdings, period=LOOKBACK_PERIOD, interval="1d",
+            group_by="ticker", auto_adjust=True, progress=False
         )
         for ht in all_holdings:
             try:
@@ -450,9 +463,9 @@ def build_final_html():
             continue
 
         tracker_html += f"<div class='bucket-title'>{bucket}</div>"
-        tracker_html += f"<table class='data-table bucket-table'>{BUCKET_COLGROUP}<thead><tr>"
+        tracker_html += f"<div class='table-wrap'><table class='data-table bucket-table'>{BUCKET_COLGROUP}<thead><tr>"
 
-        tracker_html += "<th>Ticker</th><th>Sector</th>"
+        tracker_html += "<th>Trend</th><th class='vdiv'>Ticker</th><th>Sector</th>"
         tracker_html += "<th class='vdiv'>1M</th><th>3M</th><th>6M</th><th>12M</th>"
         tracker_html += "<th class='vdiv'>ΔEMA10</th><th>ΔEMA20</th><th>ΔEMA50</th><th>ΔEMA200</th>"
         tracker_html += "<th class='vdiv'>10/20</th><th>20/50</th><th>50/200</th><th>MACD</th><th>BO</th>"
@@ -460,7 +473,8 @@ def build_final_html():
 
         for _, r in sub.iterrows():
             tracker_html += "<tr>"
-            tracker_html += f"<td><b>{make_ticker_link(r['ticker'])}</b></td>"
+            tracker_html += f"<td style='text-align:left'>{style_trend_from_macd(r.get('macd_sig'))}</td>"
+            tracker_html += f"<td class='vdiv'><b>{make_ticker_link(r['ticker'])}</b></td>"
             tracker_html += f"<td>{r['sector']}</td>"
 
             tracker_html += f"<td class='vdiv'>{style_val(r.get('1M'), 'pct')}</td>"
@@ -480,7 +494,7 @@ def build_final_html():
             tracker_html += f"<td style='text-align:center'>{style_sig(r.get('breakout','-'))}</td>"
             tracker_html += "</tr>"
 
-        tracker_html += "</tbody></table>"
+        tracker_html += "</tbody></table></div>"
         tracker_html += f"<div class='footnote'>{BUCKET_FOOTNOTE}</div>"
 
     updates_html = (
@@ -490,6 +504,7 @@ def build_final_html():
 
     if not df_updates.empty:
         updates_html += """
+        <div class="table-wrap">
         <table class='update-table'>
             <thead>
                 <tr>
@@ -511,8 +526,7 @@ def build_final_html():
             d_str = pd.to_datetime(row["date"]).strftime("%Y-%m-%d")
             if row["type"] == "Flip":
                 return f"MACD Flipped <b style='color:{c}'>{row['dir']}</b> on {d_str}"
-            else:
-                return f"Momentum <b style='color:{c}'>{row['dir']}</b> on {d_str}"
+            return f"Momentum <b style='color:{c}'>{row['dir']}</b> on {d_str}"
 
         df_updates["desc_html"] = df_updates.apply(format_desc, axis=1)
 
@@ -522,9 +536,7 @@ def build_final_html():
             "delta": "first",
             "abs_gap": "first",
             "desc_html": lambda x: "<br>".join(x),
-        })
-
-        df_grouped = df_grouped.sort_values("abs_gap", ascending=False)
+        }).sort_values("abs_gap", ascending=False)
 
         for _, r in df_grouped.iterrows():
             gap_val = float(r["gap"])
@@ -541,13 +553,13 @@ def build_final_html():
             </tr>
             """
 
-        updates_html += "</tbody></table>"
+        updates_html += "</tbody></table></div>"
     else:
         updates_html += "<p>No events found matching strict criteria.</p>"
 
     updates_html += f"<div class='footnote'>{UPDATES_FOOTNOTE}</div><br>"
 
-    # --- HOLDINGS TABLE GENERATION ---
+    # --- HOLDINGS TABLES ---
     holdings_html_map = {}
 
     def holding_row_html(ticker, name, weight, m):
@@ -562,7 +574,6 @@ def build_final_html():
                 <td class="vdiv">-</td><td>-</td><td>-</td><td>-</td><td>-</td>
             </tr>
             """
-
         return f"""
         <tr>
             <td><b>{ticker}</b></td>
@@ -608,6 +619,7 @@ def build_final_html():
             h_html += "<p style='color:gray; font-size:12px; padding:10px;'><i>Holdings data unavailable via API.</i></p>"
         else:
             h_html += f"""
+            <div class="table-wrap">
             <table class='data-table' style='font-size:12px; margin-top:5px; table-layout:fixed; width:100%;'>
                 {HOLDINGS_COLGROUP}
                 <thead>
@@ -633,7 +645,7 @@ def build_final_html():
                 m = holding_metrics_map.get(sym)
                 h_html += holding_row_html(sym, nm, wt, m)
 
-            h_html += "</tbody></table>"
+            h_html += "</tbody></table></div>"
 
         holdings_html_map[etf_ticker] = h_html
 
@@ -664,14 +676,8 @@ def build_final_html():
         viz = (i == 0)
 
         fig.add_trace(go.Candlestick(
-            x=df.index,
-            open=df["Open"],
-            high=df["High"],
-            low=df["Low"],
-            close=df["Close"],
-            name="Price",
-            visible=viz,
-            showlegend=True,
+            x=df.index, open=df["Open"], high=df["High"], low=df["Low"], close=df["Close"],
+            name="Price", visible=viz, showlegend=True
         ), row=1, col=1)
 
         fig.add_trace(go.Scatter(x=df.index, y=ema10, line=dict(color="#3b82f6", width=1),
@@ -703,183 +709,207 @@ def build_final_html():
     chart_div = fig.to_html(full_html=False, include_plotlyjs="cdn", div_id="plotly_chart")
 
     dropdown_options = "".join([f'<option value="{t}">{t}</option>' for t in valid_tickers])
-
     holdings_json = json.dumps(holdings_html_map)
     tickers_json = json.dumps(valid_tickers)
     names_json = json.dumps(TICKER_TO_NAME)
 
     final_html = f"""
-    <!DOCTYPE html>
-    <html>
-    <head>
-    <title>ETF Strategy Dashboard</title>
-    <style>
-        body {{ font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif; background-color: #f3f4f6; margin: 0; padding: 20px; color: #111827; }}
-        .container {{ max-width: 1200px; margin: 0 auto; background: white; padding: 25px; border-radius: 12px; box-shadow: 0 4px 6px rgba(0,0,0,0.05); }}
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Products Team Trend Spotter</title>
+<style>
+    body {{ font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif; background-color: #f3f4f6; margin: 0; padding: 16px; color: #111827; }}
+    .container {{ max-width: 1200px; margin: 0 auto; background: white; padding: 18px; border-radius: 12px; box-shadow: 0 4px 6px rgba(0,0,0,0.05); }}
 
-        .tab-header {{ display: flex; border-bottom: 2px solid #e5e7eb; margin-bottom: 20px; }}
-        .tab-btn {{ background: none; border: none; padding: 12px 24px; font-size: 16px; font-weight: 600; color: #6b7280; cursor: pointer; transition: all 0.2s; }}
-        .tab-btn:hover {{ color: #111827; background: #f9fafb; }}
-        .tab-btn.active {{ color: #2563eb; border-bottom: 2px solid #2563eb; margin-bottom: -2px; }}
-        .tab-content {{ display: none; animation: fadeIn 0.4s; }}
-        .tab-content.active {{ display: block; }}
+    .tab-header {{ display: flex; border-bottom: 2px solid #e5e7eb; margin-bottom: 14px; gap: 6px; }}
+    .tab-btn {{ background: none; border: none; padding: 10px 14px; font-size: 15px; font-weight: 700; color: #6b7280; cursor: pointer; transition: all 0.2s; border-radius: 10px 10px 0 0; }}
+    .tab-btn:hover {{ color: #111827; background: #f9fafb; }}
+    .tab-btn.active {{ color: #2563eb; border-bottom: 2px solid #2563eb; margin-bottom: -2px; }}
+    .tab-content {{ display: none; animation: fadeIn 0.35s; }}
+    .tab-content.active {{ display: block; }}
 
-        .bucket-title {{ background: #eef2ff; color: #111827; font-weight: bold; font-size: 14px; padding: 8px 12px; margin-top: 15px; border-left: 4px solid #c7d2fe; }}
+    .bucket-title {{ background: #eef2ff; color: #111827; font-weight: 800; font-size: 13px; padding: 8px 12px; margin-top: 14px; border-left: 4px solid #c7d2fe; border-radius: 8px; }}
 
-        .data-table {{
-            width: 100%;
-            border-collapse: collapse;
-            font-size: 13px;
-            margin-bottom: 6px;
-            table-layout: fixed;
-        }}
-        .data-table th {{
-            background: #111827;
-            color: white;
-            padding: 8px;
-            text-align: left;
-            white-space: nowrap;
-            overflow: hidden;
-            text-overflow: ellipsis;
-        }}
-        .data-table td {{
-            border-bottom: 1px solid #e5e7eb;
-            padding: 6px 8px;
-            white-space: nowrap;
-            overflow: hidden;
-            text-overflow: ellipsis;
-        }}
-        .data-table tr:nth-child(even) {{ background: #f9fafb; }}
+    .data-table {{
+        width: 100%;
+        border-collapse: collapse;
+        font-size: 13px;
+        margin-bottom: 6px;
+        table-layout: fixed;
+    }}
+    .data-table th {{
+        background: #111827;
+        color: white;
+        padding: 8px;
+        text-align: left;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+    }}
+    .data-table td {{
+        border-bottom: 1px solid #e5e7eb;
+        padding: 6px 8px;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+    }}
+    .data-table tr:nth-child(even) {{ background: #f9fafb; }}
 
-        .vdiv {{ border-left: 2px solid #e5e7eb !important; }}
-        .data-table th.vdiv {{ border-left: 2px solid #334155 !important; }}
+    .vdiv {{ border-left: 2px solid #e5e7eb !important; }}
+    .data-table th.vdiv {{ border-left: 2px solid #334155 !important; }}
 
-        .update-table {{ width: 100%; border-collapse: collapse; font-size: 13px; font-family: 'Helvetica Neue', sans-serif; }}
-        .update-table th {{ background-color: #0f172a; color: white; padding: 10px; text-align: left; font-weight: 600; }}
-        .update-table td {{ padding: 10px; border-bottom: 1px solid #e2e8f0; vertical-align: middle; }}
-        .update-table tr:nth-child(even) {{ background-color: #f8fafc; }}
-        .update-table tr:hover {{ background-color: #f1f5f9; }}
+    .update-table {{ width: 100%; border-collapse: collapse; font-size: 13px; font-family: 'Helvetica Neue', sans-serif; }}
+    .update-table th {{ background-color: #0f172a; color: white; padding: 10px; text-align: left; font-weight: 700; }}
+    .update-table td {{ padding: 10px; border-bottom: 1px solid #e2e8f0; vertical-align: middle; }}
+    .update-table tr:nth-child(even) {{ background-color: #f8fafc; }}
+    .update-table tr:hover {{ background-color: #f1f5f9; }}
 
-        .controls {{ margin-bottom: 10px; padding: 15px; background: #f8fafc; border-radius: 8px; border: 1px solid #e2e8f0; display: flex; align-items: center; justify-content: space-between; }}
-        select {{ padding: 8px; border-radius: 4px; border: 1px solid #d1d5db; font-size: 14px; width: 200px; }}
+    .controls {{ margin-bottom: 10px; padding: 12px; background: #f8fafc; border-radius: 10px; border: 1px solid #e2e8f0; display: flex; align-items: center; justify-content: space-between; gap: 10px; }}
+    select {{ padding: 8px; border-radius: 8px; border: 1px solid #d1d5db; font-size: 14px; width: 220px; }}
+    label {{ font-weight: 700; font-size: 13px; color: #111827; }}
 
-        .holdings-header {{ margin-top: 10px; font-weight: 600; }}
+    .holdings-header {{ margin-top: 10px; font-weight: 800; }}
 
-        .footnote {{
-            font-size: 11px;
-            color: #6b7280;
-            margin: 4px 2px 12px 2px;
-        }}
+    .footnote {{
+        font-size: 11px;
+        color: #6b7280;
+        margin: 4px 2px 12px 2px;
+        line-height: 1.35;
+    }}
 
-        @keyframes fadeIn {{ from {{ opacity: 0; }} to {{ opacity: 1; }} }}
-    </style>
-    </head>
-    <body>
+    @keyframes fadeIn {{ from {{ opacity: 0; }} to {{ opacity: 1; }} }}
 
-    <div class="container">
-        <div style="display:flex; justify-content:space-between; align-items:center;">
-            <h2 style="margin:0">📊 ETF Strategic Dashboard</h2>
-            <span style="color:#6b7280; font-size:12px">Generated: {date.today()}</span>
-        </div>
-        <br>
+    /* Mobile-friendly: keep desktop look unchanged; enable smooth horizontal scroll for wide tables */
+    .table-wrap {{ overflow-x: auto; -webkit-overflow-scrolling: touch; }}
+    .table-wrap table {{ min-width: 980px; }}
 
-        <div class="tab-header">
-            <button id="btn-tracker" class="tab-btn active" onclick="openTab('tracker')">📋 ETF Tracker</button>
-            <button id="btn-analyzer" class="tab-btn" onclick="openTab('analyzer')">📈 Chart Analyser</button>
-        </div>
+    @media (max-width: 768px) {{
+        body {{ padding: 10px; }}
+        .container {{ padding: 12px; border-radius: 12px; }}
+        .tab-btn {{ padding: 10px 10px; font-size: 14px; }}
+        .controls {{ flex-direction: column; align-items: flex-start; }}
+        select {{ width: 100%; }}
+        .data-table th, .data-table td {{ padding: 6px 6px; font-size: 12px; }}
+        .update-table th, .update-table td {{ padding: 8px 8px; font-size: 12px; }}
+        #chartTitle {{ margin-left: 0 !important; }}
+    }}
+</style>
+</head>
+<body>
 
-        <div id="tracker" class="tab-content active">
-            {updates_html}
-            {tracker_html}
-        </div>
+<div class="container">
+    <div style="display:flex; justify-content:space-between; align-items:center; gap:12px;">
+        <h2 style="margin:0">📈 Products Team Trend Spotter</h2>
+        <span style="color:#6b7280; font-size:12px; white-space:nowrap;">Generated: {date.today()}</span>
+    </div>
+    <br>
 
-        <div id="analyzer" class="tab-content">
-            <div class="controls">
-                <div class="select-wrapper">
-                    <label>Select ETF:</label>
-                    <select id="etfSelector" onchange="updateChart()">{dropdown_options}</select>
-                </div>
-                <div style="font-size:12px; color:gray;">Updates Chart & Holdings</div>
-            </div>
-            <h3 id="chartTitle" style="margin-left:40px; margin-bottom:0;">Technical Analysis</h3>
-            {chart_div}
-            <hr style="margin: 20px 0; border:0; border-top:1px solid #e5e7eb;">
-            <div id="holdingsContainer"></div>
-        </div>
+    <div class="tab-header">
+        <button id="btn-tracker" class="tab-btn active" onclick="openTab('tracker')">📋 ETF Tracker</button>
+        <button id="btn-analyzer" class="tab-btn" onclick="openTab('analyzer')">📈 Chart Analyser</button>
     </div>
 
-    <script>
-        var holdingsData = {holdings_json};
-        var tickers = {tickers_json};
-        var etfNames = {names_json};
-        var tracesPerItem = 8;
+    <div id="tracker" class="tab-content active">
+        {updates_html}
+        {tracker_html}
+    </div>
 
-        function openTab(tabName) {{
-            var i, x, tablinks;
-            x = document.getElementsByClassName("tab-content");
-            for (i = 0; i < x.length; i++) {{ x[i].className = x[i].className.replace(" active", ""); }}
-            tablinks = document.getElementsByClassName("tab-btn");
-            for (i = 0; i < tablinks.length; i++) {{ tablinks[i].className = tablinks[i].className.replace(" active", ""); }}
+    <div id="analyzer" class="tab-content">
+        <div class="controls">
+            <div class="select-wrapper" style="display:flex; flex-direction:column; gap:6px;">
+                <label>Select ETF</label>
+                <select id="etfSelector" onchange="updateChart()">{dropdown_options}</select>
+            </div>
+            <div style="font-size:12px; color:#6b7280;">Chart + top 10 holdings</div>
+        </div>
+        <h3 id="chartTitle" style="margin-left:40px; margin-bottom:0;">Technical Analysis</h3>
+        {chart_div}
+        <hr style="margin: 20px 0; border:0; border-top:1px solid #e5e7eb;">
+        <div id="holdingsContainer"></div>
+    </div>
+</div>
 
-            document.getElementById(tabName).className += " active";
-            document.getElementById("btn-tracker").className = (tabName === 'tracker') ? "tab-btn active" : "tab-btn";
-            document.getElementById("btn-analyzer").className = (tabName === 'analyzer') ? "tab-btn active" : "tab-btn";
+<script>
+    var holdingsData = {holdings_json};
+    var tickers = {tickers_json};
+    var etfNames = {names_json};
+    var tracesPerItem = 8;
 
-            window.dispatchEvent(new Event('resize'));
+    function openTab(tabName) {{
+        var i, x, tablinks;
+        x = document.getElementsByClassName("tab-content");
+        for (i = 0; i < x.length; i++) {{ x[i].className = x[i].className.replace(" active", ""); }}
+        tablinks = document.getElementsByClassName("tab-btn");
+        for (i = 0; i < tablinks.length; i++) {{ tablinks[i].className = tablinks[i].className.replace(" active", ""); }}
+
+        document.getElementById(tabName).className += " active";
+        document.getElementById("btn-tracker").className = (tabName === 'tracker') ? "tab-btn active" : "tab-btn";
+        document.getElementById("btn-analyzer").className = (tabName === 'analyzer') ? "tab-btn active" : "tab-btn";
+
+        window.dispatchEvent(new Event('resize'));
+    }}
+
+    function goToChart(ticker) {{
+        openTab('analyzer');
+        var selector = document.getElementById("etfSelector");
+        selector.value = ticker;
+        updateChart();
+        document.getElementById("analyzer").scrollIntoView({{behavior: 'smooth'}});
+    }}
+
+    function updateChart() {{
+        var selector = document.getElementById("etfSelector");
+        var selectedTicker = selector.value;
+        var selectedIndex = tickers.indexOf(selectedTicker);
+
+        var fullName = etfNames[selectedTicker] || selectedTicker;
+        document.getElementById("chartTitle").innerText = fullName + " Technical Analysis";
+
+        var container = document.getElementById("holdingsContainer");
+        container.innerHTML = holdingsData[selectedTicker] || "<p>No holdings data.</p>";
+
+        var totalTraces = tickers.length * tracesPerItem;
+        var visibilityArray = new Array(totalTraces).fill(false);
+
+        var startIdx = selectedIndex * tracesPerItem;
+        for (var i = 0; i < tracesPerItem; i++) {{
+            visibilityArray[startIdx + i] = true;
         }}
 
-        function goToChart(ticker) {{
-            openTab('analyzer');
-            var selector = document.getElementById("etfSelector");
-            selector.value = ticker;
+        var plotDiv = document.getElementById('plotly_chart');
+        Plotly.restyle(plotDiv, {{'visible': visibilityArray}});
+    }}
+
+    window.onload = function() {{
+        var first = tickers[0];
+        if(first) {{
+            document.getElementById("etfSelector").value = first;
             updateChart();
-            document.getElementById("analyzer").scrollIntoView({{behavior: 'smooth'}});
         }}
-
-        function updateChart() {{
-            var selector = document.getElementById("etfSelector");
-            var selectedTicker = selector.value;
-            var selectedIndex = tickers.indexOf(selectedTicker);
-
-            var fullName = etfNames[selectedTicker] || selectedTicker;
-            document.getElementById("chartTitle").innerText = fullName + " Technical Analysis";
-
-            var container = document.getElementById("holdingsContainer");
-            container.innerHTML = holdingsData[selectedTicker] || "<p>No holdings data.</p>";
-
-            var totalTraces = tickers.length * tracesPerItem;
-            var visibilityArray = new Array(totalTraces).fill(false);
-
-            var startIdx = selectedIndex * tracesPerItem;
-            for (var i = 0; i < tracesPerItem; i++) {{
-                visibilityArray[startIdx + i] = true;
-            }}
-
-            var plotDiv = document.getElementById('plotly_chart');
-            Plotly.restyle(plotDiv, {{'visible': visibilityArray}});
-        }}
-
-        window.onload = function() {{
-            var first = tickers[0];
-            if(first) {{
-                document.getElementById("etfSelector").value = first;
-                updateChart();
-            }}
-        }};
-    </script>
-    </body>
-    </html>
-    """
-
+    }};
+</script>
+</body>
+</html>
+"""
     return final_html
 
 
+# =============================================================================
+# Sidebar (simple + not confusing)
+# =============================================================================
 with st.sidebar:
     st.markdown("### Controls")
-    if st.button("🔄 Refresh now (clear cache)", use_container_width=True):
+    if st.button("🔄 Refresh data now", use_container_width=True):
         st.cache_data.clear()
         st.rerun()
-    st.caption("Dashboard HTML is generated server-side and rendered below (same look as your original).")
+    st.caption("Auto-refresh cache: 4 hours (manual refresh overrides).")
 
+
+# =============================================================================
+# Render
+# =============================================================================
 html = build_final_html()
-components.html(html, height=1600, scrolling=True)
+components.html(html, height=2200, scrolling=True)
