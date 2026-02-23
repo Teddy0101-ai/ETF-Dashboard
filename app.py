@@ -1,4 +1,4 @@
-import pandas as pd
+import pandas as pd 
 import numpy as np
 import yfinance as yf
 import plotly.graph_objects as go
@@ -15,7 +15,7 @@ warnings.simplefilter(action="ignore", category=FutureWarning)
 
 st.set_page_config(
     page_title="Products Team Trend Spotter",
-    page_icon="📊",
+    page_icon="TS",
     layout="wide",
 )
 
@@ -873,14 +873,14 @@ def build_final_html():
 
     <div class="container">
         <div style="display:flex; justify-content:space-between; align-items:center; gap:10px; flex-wrap:wrap;">
-            <h2 style="margin:0">📊 Products Team Trend Spotter</h2>
+            <h2 style="margin:0">Products Team Trend Spotter</h2>
             <span style="color:#6b7280; font-size:12px">Generated: {date.today()}</span>
         </div>
         <br>
 
         <div class="tab-header">
-            <button id="btn-tracker" class="tab-btn active" onclick="openTab('tracker')">📋 ETF Tracker</button>
-            <button id="btn-analyzer" class="tab-btn" onclick="openTab('analyzer')">📈 Chart Analyser</button>
+            <button id="btn-tracker" class="tab-btn active" onclick="openTab('tracker')">ETF Tracker</button>
+            <button id="btn-analyzer" class="tab-btn" onclick="openTab('analyzer')">Chart Analyser</button>
         </div>
 
         <div id="tracker" class="tab-content active">
@@ -1007,12 +1007,9 @@ def build_final_html():
 html = build_final_html()
 # Download HTML button
 st.download_button(
-    label="⬇️ Download HTML",
+    label="Download HTML",
     data=html.encode("utf-8"),
     file_name=f"trend_spotter_{date.today().isoformat()}.html",
     mime="text/html",
 )
 components.html(html, height=1700, scrolling=True)
-
-
-
