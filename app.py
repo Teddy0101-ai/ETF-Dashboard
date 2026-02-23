@@ -21,7 +21,7 @@ st.set_page_config(
 )
 
 # =============================================================================
-# 1. CONFIGURATION (UNCHANGED)
+# 1. CONFIGURATION
 # =============================================================================
 MIN_MACD_GAP_THRESHOLD = 0.001     # 0.10% Gap
 MIN_MACD_DELTA_THRESHOLD = 0.001   # 0.10% Delta (Change)
@@ -33,6 +33,7 @@ NOTIF_LOOKBACK_DAYS = 5
 LOOKBACK_PERIOD = "2y"
 
 universe_data = [
+    # ===================== Equity (Select Sector SPDR) =====================
     ("Equity", "Technology", "XLK", "State Street® Technology Select Sector SPDR® ETF"),
     ("Equity", "Communication Services", "XLC", "State Street® Communication Services Select Sector SPDR® ETF"),
     ("Equity", "Consumer Discretionary", "XLY", "State Street® Consumer Discretionary Select Sector SPDR® ETF"),
@@ -46,6 +47,7 @@ universe_data = [
     ("Equity", "Real Estate", "XLRE", "State Street® Real Estate Select Sector SPDR® ETF"),
     ("Equity", "Pharmaceutical", "PPH", "VanEck® Pharmaceutical ETF"),
 
+    # ===================== Theme =====================
     ("Theme", "Semiconductors", "SMH", "VanEck® Semiconductor ETF"),
     ("Theme", "Cybersecurity", "CIBR", "First Trust® Nasdaq Cybersecurity ETF"),
     ("Theme", "Clean Energy", "ICLN", "BlackRock iShares® Global Clean Energy ETF"),
@@ -53,12 +55,14 @@ universe_data = [
     ("Theme", "Defense", "ITA", "BlackRock iShares® U.S. Aerospace & Defense ETF"),
     ("Theme", "Tech-Software", "IGV", "BlackRock iShares® Expanded Tech-Software Sector ETF"),
 
+    # ===================== Commodity =====================
     ("Commodity", "Gold", "GLD", "State Street® SPDR® Gold Shares"),
     ("Commodity", "Silver", "SLV", "BlackRock iShares® Silver Trust"),
     ("Commodity", "Gold Miners", "GDX", "VanEck® Gold Miners ETF"),
     ("Commodity", "Broad Commodities", "PDBC", "Invesco® Optimum Yield Diversified Commodity Strategy No K-1 ETF"),
     ("Commodity", "Uranium-Nuclear", "NLR", "VanEck® Uranium and Nuclear ETF"),
 
+    # ===================== Region =====================
     ("Region", "Emerging Markets", "VWO", "Vanguard® FTSE Emerging Markets ETF"),
     ("Region", "Hong Kong", "3033.HK", "CSOP® Hang Seng TECH Index ETF"),
     ("Region", "China", "3188.HK", "ChinaAMC® CSI 300 Index ETF"),
@@ -68,6 +72,7 @@ universe_data = [
     ("Region", "South Korea", "EWY", "BlackRock iShares® MSCI South Korea ETF"),
     ("Region", "USA", "ITOT", "BlackRock iShares® Core S&P Total U.S. Stock Market ETF"),
 
+    # ===================== Rates =====================
     ("Rates", "Cash (T-Bills)", "USFR", "WisdomTree® Floating Rate Treasury Fund"),
     ("Rates", "Aggregate Bond", "AGG", "BlackRock iShares® Core U.S. Aggregate Bond ETF"),
     ("Rates", "Short Treasuries", "SHY", "BlackRock iShares® 1-3 Year Treasury Bond ETF"),
@@ -79,6 +84,7 @@ universe_data = [
     ("Rates", "High Yield Credit", "HYG", "BlackRock iShares® iBoxx $ High Yield Corporate Bond ETF"),
     ("Rates", "Short Investment Grade Credit", "VCSH", "Vanguard® Short-Term Corporate Bond ETF"),
 
+    # ===================== UOBKH All-ETF Portfolio =====================
     ("UOBKH All-ETF Portfolio", "S&P 500", "SPY", "State Street® SPDR® S&P 500® ETF Trust"),
     ("UOBKH All-ETF Portfolio", "Energy", "XLE", "State Street® Energy Select Sector SPDR® ETF"),
     ("UOBKH All-ETF Portfolio", "Health Care", "XLV", "State Street® Health Care Select Sector SPDR® ETF"),
@@ -93,10 +99,13 @@ universe_data = [
 
 universe = pd.DataFrame(universe_data, columns=["bucket", "sector", "ticker", "name"])
 TICKERS = sorted(universe["ticker"].unique().tolist())
-TICKER_TO_NAME = dict(zip(universe["ticker"], universe["name"]))
+TICKER_TO_NAME = dict(zip(universe.drop_duplicates("ticker")["ticker"], universe.drop_duplicates("ticker")["name"]))
+
+# --- FIX: ensure 1-to-1 bucket mapping for updates merge (prevents duplicated 3033.HK lines) ---
+UNIVERSE_BUCKET_1TO1 = universe[["ticker", "bucket"]].drop_duplicates("ticker")
 
 # =============================================================================
-# 2. CALCULATION LOGIC (UNCHANGED)
+# 2. CALCULATION LOGIC
 # =============================================================================
 def calculate_technicals(p: pd.Series):
     if len(p) < 50:
@@ -230,7 +239,7 @@ def run_event_engine(p: pd.Series, ticker: str):
 
 
 # =============================================================================
-# 3. HOLDINGS HELPERS (UNCHANGED)
+# 3. HOLDINGS HELPERS
 # =============================================================================
 def normalize_holding_symbol(sym: str, parent_etf: str) -> str:
     if not sym:
@@ -249,14 +258,13 @@ def extract_series(raw, ticker):
             if "Close" in d.columns:
                 return d["Close"].dropna()
     else:
-        # single-ticker download case
         if "Close" in raw.columns:
             return raw["Close"].dropna()
     return None
 
 
 # =============================================================================
-# 4. HTML HELPERS (UNCHANGED)
+# 4. HTML HELPERS
 # =============================================================================
 COLORS = {"green": "#047857", "red": "#b91c1c", "gray": "#6b7280", "blue": "#1d4ed8"}
 
@@ -367,13 +375,17 @@ def build_final_html():
             continue
 
     df_tracker = pd.DataFrame(tracker_rows).merge(universe, on="ticker", how="left")
+
+    # --- FIX APPLIED HERE: merge with a 1-to-1 mapping (no duplicates for 3033.HK, AGG, XLE, etc.)
     df_updates = (
-        pd.DataFrame(update_events).merge(universe[["ticker", "bucket"]], on="ticker", how="left")
+        pd.DataFrame(update_events).merge(UNIVERSE_BUCKET_1TO1, on="ticker", how="left")
         if update_events
         else pd.DataFrame()
     )
 
-    # ------------------ Holdings extraction (same as your HTML) ------------------
+    # =============================================================================
+    # 4. HOLDINGS EXTRACTION
+    # =============================================================================
     etf_holdings_map = {}
     for t in TICKERS:
         try:
@@ -384,17 +396,18 @@ def build_final_html():
                     h = h.reset_index()
                     top_10 = []
                     for _, r in h.head(10).iterrows():
-                        top_10.append(
-                            {
-                                "symbol": str(r.get("Symbol", "")).strip(),
-                                "name": str(r.get("Name", "")).strip(),
-                                "weight": float(r.get("Holding Percent", np.nan)),
-                            }
-                        )
+                        top_10.append({
+                            "symbol": str(r.get("Symbol", "")).strip(),
+                            "name": str(r.get("Name", "")).strip(),
+                            "weight": float(r.get("Holding Percent", np.nan)),
+                        })
                     etf_holdings_map[t] = top_10
         except Exception:
             etf_holdings_map[t] = []
 
+    # =============================================================================
+    # 4B. HOLDINGS TECHNICALS
+    # =============================================================================
     all_holdings = []
     for etf_t, holdings in etf_holdings_map.items():
         for h in holdings:
@@ -414,7 +427,6 @@ def build_final_html():
             auto_adjust=True,
             progress=False,
         )
-
         for ht in all_holdings:
             try:
                 p = extract_series(raw_hold, ht)
@@ -426,7 +438,9 @@ def build_final_html():
             except Exception:
                 continue
 
-    # ------------------ Build tracker HTML (same as your HTML) ------------------
+    # =============================================================================
+    # 6. HTML: TRACKER + UPDATES + HOLDINGS
+    # =============================================================================
     tracker_html = ""
     buckets = ["Equity", "Theme", "Region", "Rates", "Commodity", "UOBKH All-ETF Portfolio"]
 
@@ -469,7 +483,6 @@ def build_final_html():
         tracker_html += "</tbody></table>"
         tracker_html += f"<div class='footnote'>{BUCKET_FOOTNOTE}</div>"
 
-    # ------------------ Updates HTML (same as your HTML) ------------------
     updates_html = (
         f"<h3 style='margin-top:0'>MACD Event Updates Over The Last 5 Trading Days "
         f"(Gap &gt; {MIN_MACD_GAP_THRESHOLD:.1%} AND ΔGap &gt; {MIN_MACD_DELTA_THRESHOLD:.1%})</h3>"
@@ -490,6 +503,7 @@ def build_final_html():
             <tbody>
         """
 
+        df_updates = df_updates.copy()
         df_updates["abs_gap"] = df_updates["gap"].abs()
 
         def format_desc(row):
@@ -502,15 +516,14 @@ def build_final_html():
 
         df_updates["desc_html"] = df_updates.apply(format_desc, axis=1)
 
-        df_grouped = df_updates.groupby("ticker", as_index=False).agg(
-            {
-                "bucket": "first",
-                "gap": "first",
-                "delta": "first",
-                "abs_gap": "first",
-                "desc_html": lambda x: "<br>".join(x),
-            }
-        )
+        df_grouped = df_updates.groupby("ticker", as_index=False).agg({
+            "bucket": "first",
+            "gap": "first",
+            "delta": "first",
+            "abs_gap": "first",
+            "desc_html": lambda x: "<br>".join(x),
+        })
+
         df_grouped = df_grouped.sort_values("abs_gap", ascending=False)
 
         for _, r in df_grouped.iterrows():
@@ -534,7 +547,7 @@ def build_final_html():
 
     updates_html += f"<div class='footnote'>{UPDATES_FOOTNOTE}</div><br>"
 
-    # ------------------ Holdings HTML (same as your HTML) ------------------
+    # --- HOLDINGS TABLE GENERATION ---
     holdings_html_map = {}
 
     def holding_row_html(ticker, name, weight, m):
@@ -624,7 +637,9 @@ def build_final_html():
 
         holdings_html_map[etf_ticker] = h_html
 
-    # ------------------ Chart generation (same as your HTML) ------------------
+    # =============================================================================
+    # 7. CHART GENERATION
+    # =============================================================================
     fig = make_subplots(rows=2, cols=1, shared_xaxes=True, row_heights=[0.7, 0.3], vertical_spacing=0.03)
     TRACES_PER_ETF = 8
 
@@ -648,29 +663,32 @@ def build_final_html():
 
         viz = (i == 0)
 
-        fig.add_trace(
-            go.Candlestick(
-                x=df.index,
-                open=df["Open"],
-                high=df["High"],
-                low=df["Low"],
-                close=df["Close"],
-                name="Price",
-                visible=viz,
-                showlegend=True,
-            ),
-            row=1,
-            col=1,
-        )
+        fig.add_trace(go.Candlestick(
+            x=df.index,
+            open=df["Open"],
+            high=df["High"],
+            low=df["Low"],
+            close=df["Close"],
+            name="Price",
+            visible=viz,
+            showlegend=True,
+        ), row=1, col=1)
 
-        fig.add_trace(go.Scatter(x=df.index, y=ema10, line=dict(color="#3b82f6", width=1), name="EMA10", visible=viz, showlegend=True), row=1, col=1)
-        fig.add_trace(go.Scatter(x=df.index, y=ema20, line=dict(color="#8b5cf6", width=1), name="EMA20", visible=viz, showlegend=True), row=1, col=1)
-        fig.add_trace(go.Scatter(x=df.index, y=ema50, line=dict(color="#f59e0b", width=1), name="EMA50", visible=viz, showlegend=True), row=1, col=1)
-        fig.add_trace(go.Scatter(x=df.index, y=ema200, line=dict(color="#ef4444", width=1), name="EMA200", visible=viz, showlegend=True), row=1, col=1)
+        fig.add_trace(go.Scatter(x=df.index, y=ema10, line=dict(color="#3b82f6", width=1),
+                                 name="EMA10", visible=viz, showlegend=True), row=1, col=1)
+        fig.add_trace(go.Scatter(x=df.index, y=ema20, line=dict(color="#8b5cf6", width=1),
+                                 name="EMA20", visible=viz, showlegend=True), row=1, col=1)
+        fig.add_trace(go.Scatter(x=df.index, y=ema50, line=dict(color="#f59e0b", width=1),
+                                 name="EMA50", visible=viz, showlegend=True), row=1, col=1)
+        fig.add_trace(go.Scatter(x=df.index, y=ema200, line=dict(color="#ef4444", width=1),
+                                 name="EMA200", visible=viz, showlegend=True), row=1, col=1)
 
-        fig.add_trace(go.Bar(x=df.index, y=hist, marker_color=np.where(hist >= 0, "#22c55e", "#ef4444"), name="Histogram", visible=viz, showlegend=True), row=2, col=1)
-        fig.add_trace(go.Scatter(x=df.index, y=macd, line=dict(color="#3b82f6", width=1), name="MACD", visible=viz, showlegend=True), row=2, col=1)
-        fig.add_trace(go.Scatter(x=df.index, y=sig, line=dict(color="#f59e0b", width=1), name="Signal", visible=viz, showlegend=True), row=2, col=1)
+        fig.add_trace(go.Bar(x=df.index, y=hist, marker_color=np.where(hist >= 0, "#22c55e", "#ef4444"),
+                             name="Histogram", visible=viz, showlegend=True), row=2, col=1)
+        fig.add_trace(go.Scatter(x=df.index, y=macd, line=dict(color="#3b82f6", width=1),
+                                 name="MACD", visible=viz, showlegend=True), row=2, col=1)
+        fig.add_trace(go.Scatter(x=df.index, y=sig, line=dict(color="#f59e0b", width=1),
+                                 name="Signal", visible=viz, showlegend=True), row=2, col=1)
 
     fig.update_layout(
         height=650,
@@ -685,6 +703,7 @@ def build_final_html():
     chart_div = fig.to_html(full_html=False, include_plotlyjs="cdn", div_id="plotly_chart")
 
     dropdown_options = "".join([f'<option value="{t}">{t}</option>' for t in valid_tickers])
+
     holdings_json = json.dumps(holdings_html_map)
     tickers_json = json.dumps(valid_tickers)
     names_json = json.dumps(TICKER_TO_NAME)
@@ -855,9 +874,6 @@ def build_final_html():
     return final_html
 
 
-# =============================================================================
-# Streamlit wrapper (UI kept minimal; HTML inside is identical)
-# =============================================================================
 with st.sidebar:
     st.markdown("### Controls")
     if st.button("🔄 Refresh now (clear cache)", use_container_width=True):
@@ -866,6 +882,4 @@ with st.sidebar:
     st.caption("Dashboard HTML is generated server-side and rendered below (same look as your original).")
 
 html = build_final_html()
-
-# Height: make it tall so it feels like a full page
 components.html(html, height=1600, scrolling=True)
