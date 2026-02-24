@@ -457,13 +457,35 @@ def build_final_html():
     tracker_html = ""
     buckets = ["Equity", "Theme", "Region", "Rates", "Commodity", "UOBKH All-ETF Portfolio"]
 
+    # --- CHANGE: Trend criteria = 4 of 5 indicators bullish/bearish; else blank ---
     def trend_label_from_row(r):
-        v = str(r.get("macd_sig", ""))
-        if "↓" in v:
-            return '<span class="trend-pill bearish">Bearish</span>'
-        if "↑" in v:
+        def is_bullish(v):
+            if v is None or (isinstance(v, float) and pd.isna(v)):
+                return False
+            return "↑" in str(v)
+
+        def is_bearish(v):
+            if v is None or (isinstance(v, float) and pd.isna(v)):
+                return False
+            return "↓" in str(v)
+
+        # 5 indicators: 10/20, 20/50, 50/200, MACD, Breakout
+        vals = [
+            r.get("sig_10_20", None),
+            r.get("sig_20_50", None),
+            r.get("sig_50_200", None),
+            r.get("macd_sig", None),
+            r.get("breakout", None),
+        ]
+
+        bull = sum(is_bullish(v) for v in vals)
+        bear = sum(is_bearish(v) for v in vals)
+
+        if bull >= 4:
             return '<span class="trend-pill bullish">Bullish</span>'
-        return '<span class="trend-pill neutral">Neutral</span>'
+        if bear >= 4:
+            return '<span class="trend-pill bearish">Bearish</span>'
+        return ""  # leave blank (nothing)
 
     for bucket in buckets:
         sub = df_tracker[df_tracker["bucket"] == bucket]
